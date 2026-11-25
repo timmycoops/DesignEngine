@@ -209,6 +209,33 @@ impl PySession {
         to_py(py, &serde_json::to_value(&record).map_err(|e| CommandError::new_err(e.to_string()))?)
     }
 
+    /// Runs a case's dataflows (Reserves case plan, decisions 6 and 14): with `dataflow` that one alone, its reserves
+    /// dataflow again from its setup (with `only` a block or strip) or one of its row dataflows on the table's rows;
+    /// without, all of them in order, the reserves dataflow first. Running one never runs another. A list of the runs'
+    /// records, one a dataflow, each the table's next revision.
+    #[pyo3(signature = (table, dataflow=None, only=None))]
+    fn run_case(&mut self, py: Python<'_>, table: &str, dataflow: Option<&str>, only: Option<Vec<String>>) -> PyResult<Py<PyAny>> {
+        let id = object_id(table)?;
+        let setup = zd_commands::builtin::setup_of(self.inner.project(), self.inner.log(), id).map_err(|e| CommandError::new_err(e.to_string()))?;
+        let which: Vec<zd_core::ObjectId> = match dataflow {
+            Some(d) => vec![object_id(d)?],
+            None => std::iter::once(setup.dataflow).chain(setup.row_dataflows.iter().map(|r| r.dataflow)).collect(),
+        };
+        let mut records = Vec::with_capacity(which.len());
+        for flow in which {
+            let record = if flow == setup.dataflow {
+                let p = zd_commands::builtin::rerun_params(self.inner.project(), self.inner.log(), id, &only.clone().unwrap_or_default()).map_err(|e| CommandError::new_err(e.to_string()))?;
+                let params = serde_json::to_value(&p).map_err(|e| CommandError::new_err(e.to_string()))?;
+                py.detach(|| self.inner.run("reserves.run", params))
+            } else {
+                py.detach(|| self.inner.run("table.run_dataflow", json!({ "table": id, "dataflow": flow })))
+            }
+            .map_err(|e| CommandError::new_err(e.to_string()))?;
+            records.push(serde_json::to_value(&record).map_err(|e| CommandError::new_err(e.to_string()))?);
+        }
+        to_py(py, &serde_json::Value::Array(records))
+    }
+
     /// Adds waste allocation to a dataflow (the Waste allocation plan, decision 7): its four parameter tables, where the
     /// project hasn't one of that name, then the dataflow saved with the schedule fields, allocation steps and checks
     /// added as the Waste allocation add-on the dataflow lists (Table setup plan, decision 2). Gives back

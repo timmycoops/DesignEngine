@@ -144,7 +144,7 @@ pub fn compile_table_script(source: &str, libraries: Libraries) -> Result<TableS
 }
 
 /// Whether `given` keeps `base`'s rows: as many, and the same words in every one of `base`'s word columns it has.
-fn keeps_rows(base: &Table, given: &Table) -> Result<(), String> {
+pub(crate) fn keeps_rows(base: &Table, given: &Table) -> Result<(), String> {
     if given.rows() != base.rows() {
         return Err(format!("it gave back {} rows for the table's {}: columns go on a table only with its own rows (make a new table instead)", given.rows(), base.rows()));
     }

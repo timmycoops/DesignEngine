@@ -80,6 +80,11 @@ impl Command for SaveTableSetup {
                 return Err(CommandError::Invalid(format!("the setup gives a source for {name}, a field {} and its add-ons haven't", flow.name)));
             }
         }
+        // The case's dataflows after its reserves dataflow (Reserves case plan, decisions 2 to 5): each a row dataflow
+        // listed once, its tables parameter tables, no column with two writers, none read from a dataflow below.
+        let flows = super::row_flows(&|id| inputs.object(id).cloned(), s)?;
+        let written = table.setup.as_ref().map(|old| super::row_columns_of(inputs.project(), old)).unwrap_or_default();
+        super::check_case(table, &flows, &written).map_err(CommandError::Invalid)?;
         // A table read in place of the blocks (decision 12 of 0099). A mapping not yet whole is kept, so the Setup tab
         // can finish it a column at a time; what it lacks is said here and in the tab, and the run refuses it.
         if let Some(input) = &s.input {

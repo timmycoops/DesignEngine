@@ -240,6 +240,14 @@ pub struct Dataflow {
     /// The add-ons a main dataflow runs by default, in order; a table's setup may give its own list.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub add_ons: Vec<ObjectId>,
+    /// A row dataflow (Reserves case plan, decision 2): run on a reserves table's rows after the reserves dataflow that
+    /// made them, its formula steps `def formula(row, p):` on each row in its range and its table script steps on the
+    /// table, reading the columns of the dataflows above it and writing only its own fields' columns.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub rows: bool,
+    /// A field's unit by its name, where its kind gives none (a row dataflow's haul distance in km).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub units: BTreeMap<String, String>,
 }
 
 /// Whether a field is a schedule field (Waste allocation plan, decision 5): named with a folder, `Waste\Dragline\Prime
@@ -248,9 +256,15 @@ pub fn is_schedule_field(name: &str) -> bool {
     name.contains('\\')
 }
 
+/// The column a row dataflow's field is written to (Reserves case plan, decision 5): `Haulage\distance` for field
+/// `distance` of the dataflow Haulage; a field named with a folder, as it's named.
+pub fn row_column(dataflow: &str, field: &str) -> String {
+    if field.contains('\\') { field.to_string() } else { format!("{dataflow}\\{field}") }
+}
+
 impl Default for Dataflow {
     fn default() -> Self {
-        Dataflow { levels: default_levels(), fields: Vec::new(), steps: Vec::new(), parameters: Vec::new(), scripts: Vec::new(), lookups: Vec::new(), lookup_names: Vec::new(), words: Vec::new(), add_on: false, add_ons: Vec::new() }
+        Dataflow { levels: default_levels(), fields: Vec::new(), steps: Vec::new(), parameters: Vec::new(), scripts: Vec::new(), lookups: Vec::new(), lookup_names: Vec::new(), words: Vec::new(), add_on: false, add_ons: Vec::new(), rows: false, units: BTreeMap::new() }
     }
 }
 
@@ -408,6 +422,81 @@ impl Dataflow {
         Ok(d)
     }
 
+    /// Whether a row dataflow holds together (Reserves case plan, decision 2): fields and words each named once, none the
+    /// unit's own volume or thickness; steps named once, each a formula on the rows or a table script, the table scripts
+    /// last, none with settings; no add-ons. It has at least one step.
+    pub fn check_rows(&self) -> Result<(), String> {
+        for (i, f) in self.fields.iter().enumerate() {
+            let name = f.field.name.trim();
+            if name.is_empty() {
+                return Err(format!("field {} has no name", i + 1));
+            }
+            if name != f.field.name {
+                return Err(format!("the field {:?} has spaces at its ends", f.field.name));
+            }
+            if self.fields[..i].iter().any(|g| g.field.name.eq_ignore_ascii_case(name)) {
+                return Err(format!("the field {name} is listed twice"));
+            }
+            if matches!(f.field.kind, zd_reserves::FieldKind::Volume | zd_reserves::FieldKind::Thickness) {
+                return Err(format!("{name} is a unit's own volume or thickness, which the reserves dataflow writes: a row dataflow's field is another kind"));
+            }
+            if !matches!(f.source, FieldSource::Worked) {
+                return Err(format!("the field {name} comes from its steps in a row dataflow: they read the row, its settings and earlier columns"));
+            }
+        }
+        for (i, w) in self.words.iter().enumerate() {
+            let name = w.name.trim();
+            if name.is_empty() || name != w.name {
+                return Err(format!("word field {} has no name, or spaces at its ends", i + 1));
+            }
+            if self.words[..i].iter().any(|v| v.name.eq_ignore_ascii_case(name)) || self.fields.iter().any(|f| f.field.name.eq_ignore_ascii_case(name)) {
+                return Err(format!("the field {name} is listed twice"));
+            }
+        }
+        if !self.add_ons.is_empty() {
+            return Err("a row dataflow lists no add-ons: an add-on works inside a reserves run".into());
+        }
+        if self.steps.is_empty() {
+            return Err("a row dataflow has no steps".into());
+        }
+        let mut table_seen = false;
+        for (i, s) in self.steps.iter().enumerate() {
+            if s.step.trim().is_empty() {
+                return Err(format!("step {} has no name", i + 1));
+            }
+            if self.steps[..i].iter().any(|t| t.step == s.step) {
+                return Err(format!("the step {} is listed twice", s.step));
+            }
+            if s.allocation.is_some() {
+                return Err(format!("{} is an allocation step: it splits a column's units, which only a reserves run has; a row dataflow works on rows", s.step));
+            }
+            if s.is_built_in() {
+                return Err(format!("{} is a built-in step: a row dataflow holds formulas on rows and table scripts", s.step));
+            }
+            if s.formula.is_some() && s.table.is_some() {
+                return Err(format!("the step {} is both a formula and a table script: make them two steps", s.step));
+            }
+            if s.table.is_some() {
+                table_seen = true;
+            } else if table_seen {
+                return Err(format!("the step {} comes after a table script step: table scripts run last", s.step));
+            }
+            if s.script().is_some_and(|x| x.trim().is_empty()) {
+                return Err(format!("the step {} has no script", s.step));
+            }
+            if !s.settings.is_empty() {
+                return Err(format!("the step {} has settings: a script reads what it needs itself", s.step));
+            }
+        }
+        Ok(())
+    }
+
+    /// The columns a row dataflow of this name writes, by its fields then its words (decision 5): each under the
+    /// dataflow's own folder, `Haulage\distance`, unless the field is named with a folder already.
+    pub fn row_columns(&self, name: &str) -> Vec<(String, String)> {
+        self.fields.iter().map(|f| f.field.name.as_str()).chain(self.words.iter().map(|w| w.name.as_str())).map(|f| (f.to_string(), row_column(name, f))).collect()
+    }
+
     /// How many of the levels make a column: those above `seam`, else all but the last.
     pub fn column_levels(&self) -> usize {
         self.levels.iter().position(|l| l.attribute.eq_ignore_ascii_case("seam")).unwrap_or(self.levels.len().saturating_sub(1))
@@ -421,8 +510,14 @@ impl Dataflow {
 
     /// Whether the dataflow holds together: its fields, and its steps named, each once.
     pub fn check(&self) -> Result<(), String> {
+        if self.add_on && self.rows {
+            return Err("a dataflow is an add-on or a row dataflow, not both".into());
+        }
         if self.add_on {
             return self.check_add_on();
+        }
+        if self.rows {
+            return self.check_rows();
         }
         self.engine_fields()?;
         self.check_words()?;
@@ -511,6 +606,8 @@ mod tests {
             words: Vec::new(),
             add_on: false,
             add_ons: Vec::new(),
+            rows: false,
+            units: BTreeMap::new(),
         }
     }
 
@@ -584,6 +681,40 @@ mod tests {
         let mut d = dataflow();
         d.steps.push(DataflowStep::on("initialise"));
         assert!(d.check().unwrap_err().contains("listed twice"));
+    }
+
+    /// A row dataflow (Reserves case plan, decision 2) saves with its units and reads back; its columns go under its own
+    /// folder, a field named with a folder as named; a built-in step, an allocation, the unit's volume, a field read from
+    /// a block, no steps, a table script before a formula, and an add-on that's also a row dataflow are each refused.
+    #[test]
+    fn a_row_dataflow_holds_together() {
+        let worked = |name: &str| field(name, FieldKind::Other, AddUp::Sum, FieldSource::Worked);
+        let d = Dataflow {
+            fields: vec![worked("distance"), worked("Costs\\haul")],
+            words: vec![WordField::new("route", FieldSource::Worked)],
+            steps: vec![DataflowStep::formula("haul", "def formula(row, p):\n    row.distance = p.distance\n"), DataflowStep::table_script("sum", "def run(t):\n    return t\n")],
+            rows: true,
+            units: [("distance".to_string(), "km".to_string())].into(),
+            ..Dataflow::default()
+        };
+        d.check().unwrap();
+        let json = serde_json::to_string(&d).unwrap();
+        assert!(json.contains(r#""rows":true"#) && json.contains(r#""units":{"distance":"km"}"#), "{json}");
+        assert_eq!(serde_json::from_str::<Dataflow>(&json).unwrap(), d);
+        assert!(!serde_json::to_string(&dataflow()).unwrap().contains("rows"), "nothing written for a reserves dataflow");
+        assert_eq!(d.row_columns("Haulage"), [("distance".to_string(), "Haulage\\distance".to_string()), ("Costs\\haul".to_string(), "Costs\\haul".to_string()), ("route".to_string(), "Haulage\\route".to_string())]);
+        let refused = |change: fn(&mut Dataflow)| {
+            let mut e = d.clone();
+            change(&mut e);
+            e.check().unwrap_err()
+        };
+        assert!(refused(|e| e.steps.push(DataflowStep::on("final"))).contains("built-in step"));
+        assert!(refused(|e| e.steps.insert(0, DataflowStep::allocation("a", "def allocate(column, p):\n    pass\n"))).contains("allocation step"));
+        assert!(refused(|e| e.fields.push(field("v", FieldKind::Volume, AddUp::Sum, FieldSource::Worked))).contains("own volume or thickness"));
+        assert!(refused(|e| e.fields.push(field("dip", FieldKind::Other, AddUp::Max, FieldSource::Attribute { attribute: "dip".into() }))).contains("comes from its steps"));
+        assert!(refused(|e| e.steps.clear()).contains("no steps"));
+        assert!(refused(|e| e.steps.reverse()).contains("after a table script step"));
+        assert!(refused(|e| e.add_on = true).contains("not both"));
     }
 
     /// An allocation step (Waste allocation plan, decision 4) saves with its script and reads back; with no script, with

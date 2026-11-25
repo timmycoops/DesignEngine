@@ -39,6 +39,7 @@ mod surface_triangulate;
 mod starter;
 mod waste_allocation;
 mod table_setup;
+mod row_dataflows;
 mod read_by;
 mod setup_view;
 mod object_script;
@@ -88,6 +89,7 @@ pub use reserves_run::{
 pub use read_by::{ColumnRead, ReadBy, Reader, read_by};
 pub use setup_view::{BlocksView, FieldView, InputView, Named, SetupStep, SetupView, TableRead, setup_view};
 pub use table_setup::{SaveTableSetup, SaveTableSetupParams};
+pub use row_dataflows::{RowFlow, RowsRan, RunRowDataflow, RunRowDataflowParams, check_case, row_columns_of, row_flow, row_flows, run_row_flow};
 pub use object_script::{ObjectScript, ObjectScriptParams};
 pub use table_import::{ImportTable, ImportTableParams, table_of_csv};
 pub use brief::{BriefAsk, BriefFor, ScriptKind, brief};
@@ -199,6 +201,7 @@ pub fn register_all(registry: &mut Registry) {
     registry.register(Module::Reserves, ImportTable);
     registry.register(Module::Reserves, SaveDataflow);
     registry.register(Module::Reserves, RunReserves);
+    registry.register(Module::Reserves, RunRowDataflow);
     registry.register(Module::Reserves, EnterInTable);
     registry.register(Module::Reserves, RemoveColumn);
     registry.register(Module::Reserves, UpdateRecords);

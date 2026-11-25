@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reserves Flow</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+<style>
+/* VOICE work tool for a mine planner, dense and exact, like a shipped desktop app
+   IDEA a drill-hole strip log beside a material ledger: every step shows what ground moved where
+   PICTURE the material river across all steps, and the block's strip log before and after the chosen step
+   COLOUR white or graphite ground, geology's own fills (coal black, sandstone, mudstone, parting brown), vermilion for coal lost, ochre for dilution in
+   TYPE Archivo for titles and figures, Inter for text, JetBrains Mono only inside formulas
+   LAYOUT laptop: title and figures, river full width, then steps | inspector | block; 720px: two columns; phone: stacked, steps as a scroller */
+:root{color-scheme:light dark;--bg:light-dark(#ffffff,#111214);--panel:light-dark(#f5f4f0,#18191c);--ink:light-dark(#141517,#ecebe7);--mute:light-dark(#5b5d63,#a5a6aa);--rule:light-dark(#e2e0d9,#2d2e32);--rule2:light-dark(#cfccc3,#3d3e43);--coal:#151515;--coalEdge:light-dark(#151515,#6a6a70);--ob:#e6d49c;--ib:#c4c0b4;--part:#8f6c49;--floor:#a7a398;--topsoil:#7c8a43;--loss:light-dark(#d33d1c,#ff6b47);--dil:light-dark(#b0740b,#e9aa3c);--gold:light-dark(#c4961a,#ebc04d);--pos:light-dark(#2c5b8a,#77a9dc);--seqLo:light-dark(#f4ecd5,#2a261c);--seqHi:light-dark(#8a5a12,#f0c46a);--sel:light-dark(#eef1f5,#1d232c)}
+:root[data-theme=light]{color-scheme:light}
+:root[data-theme=dark]{color-scheme:dark}
+*{box-sizing:border-box;min-width:0}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font:15px/1.5 Inter,system-ui,sans-serif;overflow-x:clip}
+h1,h2,h3{font-family:Archivo,Inter,sans-serif;margin:0;letter-spacing:-.02em}
+button{font:inherit;color:inherit}
+.wrap{max-width:1480px;margin:0 auto;padding:0 max(2vw,16px)}
+.bar{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--rule)}
+.bar .wrap{display:flex;gap:16px;align-items:center;min-height:56px;flex-wrap:wrap;padding-block:8px}
+.brand{font-family:Archivo,sans-serif;font-weight:800;font-size:17px;letter-spacing:-.02em;display:flex;gap:8px;align-items:center}
+.brand i{width:14px;height:22px;background:linear-gradient(var(--ob) 0 38%,var(--coal) 38% 58%,var(--ib) 58% 78%,var(--coal) 78%);border:1px solid var(--rule2);border-radius:2px;display:inline-block}
+.cases{display:flex;gap:4px;flex-wrap:wrap}
+.cases button{border:1px solid var(--rule2);background:transparent;border-radius:999px;padding:6px 14px;min-height:36px;cursor:pointer}
+.cases button[aria-pressed=true]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.status{margin-left:auto;display:flex;gap:12px;align-items:center;color:var(--mute);font-size:13px;flex-wrap:wrap}
+.ok{color:var(--pos);font-weight:600}
+.head{padding:22px 0 8px;display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1.6fr);gap:24px;align-items:end}
+.head h1{font-size:clamp(24px,2.6vw,36px);line-height:1.08;font-weight:800;text-wrap:balance}
+.head p{margin:6px 0 0;color:var(--mute);font-size:13px}
+.kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:1px;background:var(--rule);border:1px solid var(--rule);border-radius:10px;overflow:hidden}
+.kpi{background:var(--bg);padding:10px 12px}
+.kpi b{display:block;font:800 clamp(18px,1.8vw,24px)/1.1 Archivo,sans-serif;white-space:nowrap;font-variant-numeric:tabular-nums}
+.kpi span{font-size:13px;color:var(--mute)}
+.kpi em{font-style:normal;font-size:13px;white-space:nowrap;display:block}
+.up{color:var(--pos)}.dn{color:var(--loss)}
+.river{position:relative;height:300px;margin:8px 0 4px}
+.river svg{position:absolute;inset:0;width:100%;height:100%}
+svg text{font-family:Inter,sans-serif;font-size:13px;fill:var(--ink)}
+.river .halo{paint-order:stroke;stroke:var(--bg);stroke-width:4px}
+.main{display:grid;grid-template-columns:250px minmax(0,1fr) 370px;gap:20px;padding:12px 0 32px;align-items:start}
+.panel{background:var(--panel);border-radius:12px;padding:14px}
+.spine{padding:6px}
+.stage{font-size:13px;color:var(--mute);padding:10px 10px 4px}
+.step{display:grid;grid-template-columns:22px minmax(0,1fr) auto;gap:8px;align-items:center;width:100%;text-align:left;border:0;background:transparent;border-radius:8px;padding:9px 10px;min-height:44px;cursor:pointer}
+.step:hover{background:var(--sel)}
+.step[aria-current=true]{background:var(--bg);box-shadow:inset 0 0 0 1px var(--rule2)}
+.step .n{color:var(--mute);font-size:13px;font-variant-numeric:tabular-nums}
+.step .ms{font-size:13px;color:var(--mute);white-space:nowrap}
+.step.ran .n{color:var(--pos)}
+@keyframes ran{from{background:color-mix(in oklab,var(--pos) 22%,transparent)}to{background:transparent}}
+.step.ran{animation:ran 1.2s ease-out}
+@media(prefers-reduced-motion:reduce){.step.ran{animation:none}}
+.tag{font-size:13px;padding:1px 8px;border-radius:999px;white-space:nowrap;border:1px solid var(--rule2);color:var(--mute)}
+.tag.core{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.tag.move{border-color:var(--dil);color:var(--dil)}
+.tag.formula{border-color:var(--pos);color:var(--pos)}
+.tag.ledger{border-color:var(--gold);color:var(--gold)}
+.insp h2{font-size:24px;line-height:1.1}
+.insp .top{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+.rule{margin:0 0 12px;max-width:68ch}
+.io{display:grid;grid-template-columns:64px minmax(0,1fr);gap:4px 10px;font-size:13px;margin-bottom:14px}
+.io dt{color:var(--mute)}.io dd{margin:0}
+code,.chip{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:12.5px}
+.chip{display:inline-block;background:var(--bg);border:1px solid var(--rule);border-radius:6px;padding:0 6px;margin:0 4px 3px 0;overflow-wrap:anywhere}
+pre.code{background:var(--bg);border:1px solid var(--rule);border-radius:10px;padding:12px 14px;margin:0 0 14px;font:13px/1.6 "JetBrains Mono",ui-monospace,monospace;overflow-x:auto;white-space:pre}
+.k{color:var(--pos)}.c{color:var(--mute)}.nu{color:var(--dil)}
+.expr{font:inherit;color:var(--ink);background:color-mix(in oklab,var(--pos) 10%,var(--bg));border:1px solid var(--pos);border-radius:6px;padding:2px 6px;width:min(46ch,100%);font-size:16px}
+.err{color:var(--loss);font-size:13px;margin:-8px 0 12px}
+.set{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px 18px;margin-bottom:14px}
+.set label{display:flex;justify-content:space-between;gap:8px;font-size:13px}
+.set label b{font-weight:600;white-space:nowrap;font-variant-numeric:tabular-nums}
+.ov{color:var(--pos);margin-left:4px}
+.rst{border:0;background:none;color:var(--pos);font-size:13px;cursor:pointer;padding:0 0 0 6px;min-height:24px}
+input[type=range]{width:100%;accent-color:var(--ink);height:28px}
+.sub{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin:6px 0;flex-wrap:wrap}
+.sub h3{font-size:16px}
+.sub span{font-size:13px;color:var(--mute)}
+.scroll{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{font-weight:500;color:var(--mute);text-align:left;border-bottom:1px solid var(--rule2);padding:6px 8px 6px 0}
+td{border-bottom:1px solid var(--rule);padding:7px 8px 7px 0;vertical-align:top}
+td.r,th.r{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+tbody tr{cursor:pointer}
+tbody tr:hover td{background:var(--sel)}
+tr.hit td{background:color-mix(in oklab,var(--loss) 10%,transparent)}
+.was{color:var(--mute)}
+.to-w{color:var(--loss)}.to-c{color:var(--dil)}.to-t{color:var(--topsoil)}
+.bal{margin-top:10px;font-size:13px;display:flex;gap:8px;align-items:center}
+.journey{display:flex;gap:6px;overflow-x:auto;padding:4px 0 2px}
+.jc{flex:none;min-width:118px;border:1px solid var(--rule);background:var(--bg);border-radius:8px;padding:6px 8px;font-size:13px}
+.jc small{display:block;color:var(--mute);font-size:13px}
+.jc.chg{border-color:var(--loss)}
+.sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px;border:1px solid var(--coalEdge)}
+.map{display:grid;grid-template-columns:repeat(14,minmax(0,1fr));gap:2px;margin:6px 0}
+.map button{aspect-ratio:1.35;border:0;border-radius:3px;cursor:pointer;padding:0;min-height:18px}
+.map button[aria-pressed=true]{outline:2px solid var(--ink);outline-offset:1px}
+.leg{display:flex;gap:8px;align-items:center;font-size:13px;color:var(--mute)}
+.leg i{flex:1;height:8px;border-radius:4px}
+.blk{display:flex;justify-content:space-between;gap:8px;font-size:13px;margin:10px 0 4px;flex-wrap:wrap}
+.blk b{font-family:Archivo,sans-serif;font-size:16px}
+.log svg{display:block;width:100%}
+.units{padding:4px 0 24px;border-top:1px solid var(--rule)}
+.utop{display:flex;justify-content:space-between;align-items:flex-end;gap:12px 20px;flex-wrap:wrap;padding:16px 0 10px}
+.utop h2{font-size:24px}.utop p{margin:2px 0 0;font-size:13px}
+.tools{display:flex;gap:8px 12px;align-items:center;flex-wrap:wrap}
+.seg{display:flex;border:1px solid var(--rule2);border-radius:8px;overflow:hidden;flex-wrap:wrap}
+.seg button{border:0;background:transparent;padding:6px 10px;min-height:36px;cursor:pointer;font-size:13px;white-space:nowrap}
+.seg button+button{border-left:1px solid var(--rule2)}
+.seg button[aria-pressed=true]{background:var(--ink);color:var(--bg)}
+#colq{font-size:16px;padding:6px 10px;border:1px solid var(--rule2);border-radius:8px;background:var(--bg);color:var(--ink);width:150px;min-height:36px}
+.chk{display:flex;gap:6px;align-items:center;font-size:13px;min-height:36px}
+.lnk{border:0;background:none;color:var(--pos);cursor:pointer;font-size:13px;min-height:36px}
+.ugrid{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:20px;align-items:start}
+.gridwrap{overflow:auto;max-height:640px;border:1px solid var(--rule);border-radius:10px}
+.ut{border-collapse:separate;border-spacing:0;font-size:13px;width:max-content;min-width:100%}
+.ut th,.ut td{padding:6px 10px;border-bottom:1px solid var(--rule);white-space:nowrap;background:var(--bg)}
+.ut td.r,.ut th.r{text-align:right;font-variant-numeric:tabular-nums}
+.ut thead th{position:sticky;top:0;z-index:2;background:var(--panel);vertical-align:bottom;line-height:1.25;font-weight:500;color:var(--ink)}
+.ut thead th small{display:block;color:var(--mute);font-weight:400}
+.ut th.rd{box-shadow:inset 0 -3px 0 var(--rule2)}.ut th.wr{box-shadow:inset 0 -3px 0 var(--pos);color:var(--pos)}
+.ut .fix{position:sticky;left:0;z-index:1;border-right:1px solid var(--rule2);min-width:150px;text-align:left}
+.ut thead .fix{z-index:3}
+.ut tr.grp td{background:var(--panel);font-weight:600;cursor:pointer}
+.ut tr.grp .cnt{font-weight:400;color:var(--mute);margin-left:6px}
+.ut tbody tr.row td.fix{padding-left:26px}
+.ut td.chg{background:color-mix(in oklab,var(--dil) 14%,var(--bg))}
+.ut tr.grp td.chg{background:color-mix(in oklab,var(--dil) 18%,var(--panel))}
+.ut td.chg small{display:block;color:var(--mute);font-weight:400}
+.ut td.out{color:var(--loss)}.ut td.in{color:var(--dil)}
+.ut tr.sel td{box-shadow:inset 0 1px 0 var(--loss),inset 0 -1px 0 var(--loss)}
+.ut tr.row{cursor:pointer}
+.ut tr.row:hover td{background:var(--sel)}
+.ut .arr{color:var(--mute)}
+.drawer h3{font-size:16px;margin-bottom:2px}
+.drawer dl{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:3px 10px;font-size:13px;margin:8px 0 12px}
+.drawer dt{color:var(--mute);grid-column:1/-1;margin-top:8px;font-weight:600}
+.drawer dd{margin:0;font-variant-numeric:tabular-nums}
+.drawer dd.v{text-align:right;white-space:nowrap}.drawer dd.w{color:var(--mute);white-space:nowrap}
+.drawer .journey{flex-wrap:wrap}
+.fmap{margin-top:16px}.fmap summary{cursor:pointer;font-size:14px;min-height:36px;display:flex;align-items:center}
+.fm th,.fm td{text-align:center;padding:4px 6px;font-size:13px;border-bottom:1px solid var(--rule)}
+.fm th:first-child,.fm td:first-child{text-align:left;white-space:nowrap}
+.dotw{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--pos)}.dotr{display:inline-block;width:10px;height:10px;border-radius:50%;border:1.5px solid var(--mute)}
+@media(max-width:1180px){.ugrid{grid-template-columns:1fr}.gridwrap{max-height:520px}}
+select{font:16px Inter,system-ui,sans-serif;color:var(--ink);background:var(--bg);border:1px solid var(--rule2);border-radius:8px;padding:6px 8px;min-height:36px}
+.seg .ed{padding:6px 8px;color:var(--mute)}
+.seg .add{color:var(--pos)}
+.setEd{margin:4px 0 14px;padding:14px}
+.setEd .row1{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.setEd input[type=text]{font-size:16px;padding:6px 10px;border:1px solid var(--rule2);border-radius:8px;background:var(--bg);color:var(--ink);min-height:36px;width:min(280px,100%)}
+.setEd .cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:4px 16px}
+.setEd h4{margin:8px 0 2px;font-size:13px;color:var(--mute);font-weight:600}
+.setEd label{display:flex;gap:6px;align-items:center;font-size:14px;min-height:30px}
+.btn{border:1px solid var(--rule2);background:var(--bg);border-radius:8px;padding:6px 14px;min-height:36px;cursor:pointer}
+.btn.pri{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.btn.del{color:var(--loss);border-color:transparent;background:none}
+.pt{border-collapse:collapse;font-size:13px;width:100%}
+.pt th{font-weight:500;text-align:right;padding:4px 6px;border-bottom:1px solid var(--rule2);vertical-align:bottom;line-height:1.25;white-space:nowrap}
+.pt th small{display:block;color:var(--mute);font-weight:400}
+.pt th:first-child,.pt td:first-child{text-align:left}
+.pt td{padding:3px 6px;border-bottom:1px solid var(--rule);white-space:nowrap}
+.pt tr.lv0 td:first-child{font-weight:600}
+.pt tr.lv1 td:first-child{padding-left:16px;font-weight:500}
+.pt tr.lv2 td:first-child{padding-left:30px;color:var(--mute)}
+.pt tr.use td{background:var(--sel)}
+.pt input{font:16px Inter,system-ui,sans-serif;width:74px;text-align:right;padding:4px 6px;border:1px solid var(--rule);border-radius:6px;background:var(--bg);color:var(--ink);font-variant-numeric:tabular-nums}
+.pt input::placeholder{color:var(--mute);opacity:.75}
+.pt input:not(:placeholder-shown){border-color:var(--rule2);font-weight:600}
+.pt td.eff input{outline:2px solid var(--pos);outline-offset:1px}
+.ptools{display:flex;gap:8px 12px;align-items:center;flex-wrap:wrap;font-size:13px;margin:8px 0 14px}
+.toast{position:sticky;bottom:12px;margin-left:auto;width:max-content;max-width:calc(100% - 32px);background:var(--ink);color:var(--bg);border-radius:999px;padding:8px 16px;font-size:13px;opacity:0;transition:opacity .3s;pointer-events:none}
+.toast.on{opacity:1}
+.note{color:var(--mute);font-size:13px;padding:0 0 28px}
+.keys{color:var(--mute);font-size:13px}
+@media(max-width:1180px){.main{grid-template-columns:240px minmax(0,1fr)}.blockp{grid-column:1/-1;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px}.head{grid-template-columns:1fr}}
+@media(max-width:760px){.main{grid-template-columns:1fr}.spine{display:flex;overflow-x:auto;gap:4px;padding:6px}.stage{display:none}.step{flex:none;width:auto;grid-template-columns:auto auto}.step .ms{display:none}.blockp{grid-template-columns:1fr}.kpis{grid-template-columns:repeat(3,minmax(0,1fr))}.status .keys{display:none}.river{height:260px}}
+@media(max-width:600px){.stack thead{display:none}.stack tr{display:grid;padding-block:8px;border-bottom:1px solid var(--rule)}.stack td{display:flex;justify-content:space-between;gap:12px;border:0;padding:2px 0;text-align:right}.stack td::before{content:attr(data-l);color:var(--mute);text-align:left}}
+</style>
+</head>
+<body>
+<header class="bar"><div class="wrap">
+  <div class="brand"><i aria-hidden="true"></i>Reserves flow</div>
+  <div class="cases" id="cases" role="group" aria-label="Case"></div>
+  <div class="status"><span id="runinfo"></span><span id="balance" class="ok"></span><span class="keys">↑ ↓ steps</span></div>
+</div></header>
+
+<main class="wrap">
+  <section class="head">
+    <div><h1 id="finding">Reserves flow</h1><p>Demo pit, 14 strips × 8 blocks, made-up data. Every control re-runs the flow here in the page.</p></div>
+    <div class="kpis" id="kpis"></div>
+  </section>
+
+  <div class="river" id="river" aria-label="Material river: ROM coal and waste through every step"><svg id="rsvg" role="img"></svg></div>
+
+  <div class="main">
+    <nav class="panel spine" id="spine" aria-label="Steps"></nav>
+
+    <section class="insp" id="insp" aria-live="polite"></section>
+
+    <aside class="blockp">
+      <div class="panel">
+        <div class="sub"><h3 id="mapTitle">Blocks</h3><span id="mapUnit"></span></div>
+        <div class="map" id="map" role="group" aria-label="Blocks, strip by strip"></div>
+        <div class="leg"><span id="legLo"></span><i id="legBar"></i><span id="legHi"></span></div>
+      </div>
+      <div class="panel" style="margin-top:14px">
+        <div class="blk"><b id="blkName"></b><span id="blkInfo"></span></div>
+        <div class="log" id="log"></div>
+        <div class="leg" style="flex-wrap:wrap;gap:6px 14px;margin-top:6px">
+          <span><span class="sw" style="background:var(--coal)"></span>Coal</span>
+          <span><span class="sw" style="background:repeating-linear-gradient(45deg,var(--coal) 0 3px,var(--loss) 3px 5px)"></span>Coal to waste</span>
+          <span><span class="sw" style="background:repeating-linear-gradient(45deg,var(--ib) 0 3px,var(--coal) 3px 5px)"></span>Rock into ROM</span>
+          <span><span class="sw" style="background:var(--topsoil)"></span>Topsoil</span>
+        </div>
+      </div>
+    </aside>
+  </div>
+  <section class="units" id="unitsBand" aria-label="Units and fields">
+    <div class="utop">
+      <div><h2 id="uTitle">Units</h2><p id="uSub" class="was"></p></div>
+      <div class="tools">
+        <label class="chk" for="grpBy">Group by</label>
+        <select id="grpBy"><option value="ws">Working section</option><option value="seam">Seam</option><option value="ply">Ply</option><option value="mat">Material</option><option value="none">No groups</option></select>
+        <div class="seg" id="colsets" role="group" aria-label="Field sets"></div>
+        <input id="colq" type="search" placeholder="Find a field" aria-label="Find a field">
+        <div class="seg" id="modes" role="group" aria-label="Show changes as"></div>
+        <label class="chk"><input type="checkbox" id="onlyChg"> Changed only</label>
+        <button type="button" class="lnk" id="expAll">Expand all</button>
+      </div>
+    </div>
+    <div id="setEditor"></div>
+    <div class="ugrid">
+      <div class="gridwrap" id="gridwrap"></div>
+      <aside class="drawer panel" id="drawer"></aside>
+    </div>
+    <details class="fmap"><summary>Field map: which step reads and writes each field</summary><div class="scroll" id="fmap"></div></details>
+  </section>
+  <div class="toast" id="toast" role="status"></div>
+  <p class="note">A concept for the Design Engine dataflow. The engine on this page is a stand-in written for the demo: losses, dilution, cut-offs and costs are illustrative, not PIT B results.</p>
+</main>
+
+<script>
+{
+const AREA=6000,NS=14,NB=8;
+const P0={plantEff:0.95,topsoil:0.3,price:140,costRom:26,costWaste:5.2,costTop:7};
+const T0={plyAsh:{_:40,GU:38,P2:42},minParting:{_:0.30,GM:0.25},minMine:{_:0.5,GL:0.45},roofLoss:{_:0.10,GM:0.15,GU1a:0.12},floorLoss:{_:0.15,GL:0.20},roofDil:{_:0.05},floorDil:{_:0.05,GM:0.08},cutoff:{_:35,GM:33},mIs:{_:8,GM:9}};
+const SEAMS=['GU','GM','GL'];
+function lk(p,key,seam,ply){const t=p.T[key];if(ply&&ply in t)return[t[ply],ply];if(seam&&seam in t)return[t[seam],seam];return[t._,'default']}
+const lv=(p,key,seam,ply)=>lk(p,key,seam,ply)[0];
+const PDEF={plyAsh:['Ply ash limit','%',25,60,1],minParting:['Min separable parting','m',0.1,1,0.05],minMine:['Min mining thickness','m',0.2,1.5,0.05],roofLoss:['Roof loss','m',0,0.4,0.05],floorLoss:['Floor loss','m',0,0.4,0.05],roofDil:['Roof dilution','m',0,0.3,0.05],floorDil:['Floor dilution','m',0,0.3,0.05],cutoff:['ROM ash cut-off','%',20,50,1],mIs:['In situ moisture','%',4,14,0.5],plantEff:['Plant efficiency','',0.8,1,0.01],topsoil:['Topsoil depth','m',0,1,0.05],price:['Product price','A$/t',60,220,5],costRom:['ROM mine and process','A$/t',10,50,1],costWaste:['Waste','A$/bcm',2,12,0.1],costTop:['Topsoil','A$/bcm',2,15,0.5]};
+const EXPR0='clamp(1.03 - 0.017 * rom_ash, 0.35, 0.92)';
+const STEPS=[
+ {id:'source',cols:{r:[],w:[]},name:'Source',short:'Source',kind:'source',stage:'Inputs',rule:'Block solids, the seam model and the parameter set for this case. Nothing is calculated here; every step below reads from it.',reads:['block solids','seam model','parameter set'],writes:[],params:[]},
+ {id:'init',cols:{r:[],w:['thick','vol','t','rd','ash','vm','ts','cv','m','mat','rom_t','waste_bcm']},name:'Initialise',short:'Init',kind:'core',stage:'Prepare',rule:'Cut each block at the seam model horizons. Every piece becomes a unit with its rock type, thickness, ash and density.',reads:['block solid','seam horizons','ply qualities'],writes:['unit','thickness','ash_ad','rd_ad'],params:[]},
+ {id:'ws',cols:{r:['thick','ash'],w:['mat','ws','rom_t','waste_bcm','note']},name:'Working sections',short:'Sections',kind:'core',stage:'Working sections',rule:'In Spry’s order: reject plies over the ply ash limit, keep partings thinner than the minimum separable parting inside the section, then drop sections thinner than the minimum mining thickness.',reads:['unit','ash_ad','thickness'],writes:['ws','material','audit'],params:['plyAsh','minParting','minMine']},
+ {id:'ld',cols:{r:['ws','thick'],w:['mat','ws','rom_t','waste_bcm','note']},name:'Loss and dilution',short:'Loss/dil',kind:'core',stage:'ROM',rule:'Take roof and floor loss off each working section as waste. Bring the rock either side into the section as roof and floor dilution, at its own ash and density.',reads:['ws','thickness'],writes:['rom_t','rom_ash','audit'],params:['roofLoss','floorLoss','roofDil','floorDil']},
+ {id:'cut',cols:{r:['ws','ash'],w:['mat','ws','rom_t','waste_bcm','note']},name:'ROM ash cut-off',short:'Cut-off',kind:'core',stage:'ROM',rule:'After dilution, a working section whose ROM ash is over the cut-off goes to waste, and the reason is written to its audit field.',reads:['rom_ash'],writes:['material','audit'],params:['cutoff']},
+ {id:'rd',cols:{r:['rd','m'],w:['rd_is']},name:'In situ density',short:'RD',kind:'formula',stage:'Qualities',rule:'Formula: Preston–Sanders from air-dried to in situ basis. Adds a field, moves nothing.',reads:['rd_ad'],writes:['rd_is'],params:['mIs'],code:'def rd_insitu(u, p):\n    # Preston–Sanders, air dried to in situ, per unit\n    m_ad, m_is = u.m_ad, p.m_is\n    return u.rd_ad * (100 - m_ad) / (100 + u.rd_ad * (m_is - m_ad) - m_is)'},
+ {id:'prod',cols:{r:['rom_t','ash'],w:['yld','prod_t']},name:'Product yield',short:'Product',kind:'formula',stage:'Product',rule:'Formula: yield from ROM ash, times plant efficiency. Edit the yield line and every block re-runs from here.',reads:['rom_t','rom_ash'],writes:['yield','product_t'],params:['plantEff'],editable:true},
+ {id:'top',cols:{r:['mat'],w:['proc','note']},name:'Topsoil',short:'Topsoil',kind:'move',stage:'Waste',rule:'take_top: label the top of the first waste unit as topsoil, down to the depth set. Same volume, new process.',reads:['material','depth'],writes:['process'],params:['topsoil']},
+ {id:'led',cols:{r:['prod_t','rom_t','waste_bcm','proc'],w:[]},name:'Margin ledger',short:'Margin',kind:'ledger',stage:'Value',rule:'One line per driver: quantity × rate. Product tonnes earn revenue; ROM tonnes, waste and topsoil carry cost. A price or rate change re-runs only this step.',reads:['product_t','rom_t','waste bcm','topsoil bcm'],writes:['revenue','cost','margin'],params:['price','costRom','costWaste','costTop']},
+ {id:'out',cols:{r:['rom_t','ash','vm','ts','cv','prod_t','waste_bcm'],w:[]},name:'Write results',short:'Write',kind:'write',stage:'Write',rule:'Write the reserves table as Spry-style nodes, coal in t and waste in BCM, with the Scheduled fields ready for Spry.',reads:['all fields'],writes:['Reserves table','Scheduled\\Coal','Scheduled\\Waste'],params:[]}];
+const KIND={source:'Inputs',core:'Built-in',move:'Move',formula:'Formula',ledger:'Ledger',write:'Write'};
+const CASES=[{name:'Base',ov:{},tov:{}},{name:'Low price',ov:{price:110},tov:{}},{name:'Tight loss',ov:{},tov:{roofLoss:{_:0.2,GM:0.25,GU1a:0.22},floorLoss:{_:0.25,GL:0.3}}}];
+
+const f1=x=>x.toFixed(1),f2=x=>x.toFixed(2),fk=x=>Math.round(x).toLocaleString('en-AU');
+const fmt=(v,st)=>st>=1?String(Math.round(v)):v.toFixed(st<0.1?2:1);
+const money=m=>(m<0?'\u2212':'')+'A$'+Math.abs(Math.round(m))+'M';
+const clamp=(x,a,b)=>Math.min(b,Math.max(a,x));
+const rdc=a=>1.28+0.0105*a;
+function rng(s){return()=>(s=s*16807%2147483647)/2147483647}
+function makePit(){const r=rng(20261125),n=()=>r()-0.5,out=[];
+ for(let i=0;i<NS;i++)for(let j=0;j<NB;j++){const x=i/(NS-1),y=j/(NB-1),U=[];let d=0;
+  const add=(name,seam,rock,t,ash)=>{t=Math.max(0.06,t);const c=rock==='coal';
+   U.push({name,seam,rock,top:d,bot:d+t,ash,rd:c?rdc(ash):rock==='part'?2.0:rock==='ob'?2.3:2.35,vm:c?Math.max(8,31-0.18*ash+n()):12,ts:c?0.35+0.012*ash+0.1*n():0.08,cv:c?Math.max(2,33.8-0.37*ash):1.5,m:c?3+0.6*n():2.2});d+=t};
+  add('OB',null,'ob',14+58*x+6*Math.sin(y*3+x*2)+4*n(),88);
+  const g=11+4*x;
+  add('GU1a','GU','coal',0.75+0.2*Math.sin(x*4+y)+0.08*n(),g-1+2*n());
+  add('GU1b','GU','coal',0.7+0.15*Math.cos(x*3)+0.08*n(),g+1+2*n());
+  add('GU1c','GU','coal',0.55+0.15*Math.sin(y*4)+0.08*n(),g+4+3*n());
+  add('P1','GU','part',0.16+0.34*(0.5+0.5*Math.sin(y*5-x*3))+0.05*n(),72);
+  add('GU2a','GU','coal',0.6+0.2*Math.cos(x*3+y*2)+0.08*n(),14+6*y+2*n());
+  add('GU2b','GU','coal',0.5+0.2*Math.sin(x+y*3)+0.08*n(),16+7*y+2*n());
+  add('IB1',null,'ib',5+3*y+n(),84);
+  const gm=18+12*(0.5+0.5*Math.sin(x*3+y*4));
+  add('GM1','GM','coal',0.6+0.25*Math.sin(x*2-y*3)+0.08*n(),gm-2+2*n());
+  add('GMp','GM','part',0.08+0.12*r(),70);
+  add('GM2','GM','coal',0.5+0.2*Math.cos(x*2)+0.08*n(),gm+2*n());
+  add('GM3','GM','coal',0.4+0.15*Math.sin(y*2)+0.08*n(),gm+3+2*n());
+  add('IB2',null,'ib',9+4*x+2*n(),84);
+  add('GL1','GL','coal',0.7+0.15*Math.cos(x*5+y)+0.08*n(),13+3*n());
+  add('GL2','GL','coal',0.6+0.15*Math.sin(x*3)+0.08*n(),15+3*n());
+  add('P2','GL','coal',0.3+0.25*r(),32+16*r());
+  add('GL3','GL','coal',0.55+0.15*Math.cos(y*3)+0.08*n(),17+3*n());
+  add('FL',null,'floor',1.5,86);
+  out.push({id:'S'+String(i+1).padStart(2,'0')+'-B'+(j+1),i,j,units:U,depth:d});}
+ return out}
+
+const cp=L=>L.map(v=>({...v}));
+function splitAt(L,d){const o=[];for(const v of L){if(d>v.top+1e-9&&d<v.bot-1e-9)o.push({...v,bot:d},{...v,top:d});else o.push(v)}return o}
+function setRange(L,a,b,fn){a=Math.max(0,a);if(b<=a+1e-9)return L;L=splitAt(splitAt(L,a),b);return L.map(v=>v.top>=a-1e-9&&v.bot<=b+1e-9?fn({...v}):v)}
+const at=(L,d)=>L.find(v=>d>=v.top&&d<v.bot)||L[L.length-1];
+function wsStats(L){const m={};for(const v of L)if(v.mat==='coal'&&v.ws){const s=m[v.ws]||(m[v.ws]={id:v.ws,top:v.top,bot:v.bot,vol:0,t:0,at:0});const vol=(v.bot-v.top)*AREA,t=vol*v.rd;s.top=Math.min(s.top,v.top);s.bot=Math.max(s.bot,v.bot);s.vol+=vol;s.t+=t;s.at+=t*v.ash}
+ for(const s of Object.values(m)){s.ash=s.at/s.t;s.rd=s.t/s.vol}return m}
+const toWaste=note=>v=>(v.mat='waste',v.ws=null,v.note=note,v);
+
+const RUN={
+ source:()=>({L:[]}),
+ init:b=>({L:b.units.map(u=>({top:u.top,bot:u.bot,src:u.name,seam:u.seam,rock:u.rock,ash:u.ash,rd:u.rd,vm:u.vm,ts:u.ts,cv:u.cv,m:u.m,mat:u.rock==='coal'?'coal':'waste',ws:null,proc:null,note:'From the seam model'}))}),
+ ws:(b,L,p)=>{L=cp(L);
+  for(const v of L)if(v.rock==='coal'){const[lim,lvl]=lk(p,'plyAsh',v.seam,v.src);if(v.ash>lim){v.mat='waste';v.note='Ply ash '+f1(v.ash)+' % over the '+lim+' % limit ('+lvl+')'}}
+  for(let k=1;k<L.length-1;k++){const v=L[k],t=v.bot-v.top;if(v.rock==='part'&&L[k-1].mat==='coal'&&L[k+1].mat==='coal'&&t<lv(p,'minParting',v.seam,v.src)){v.mat='coal';v.note='Parting '+f2(t)+' m, under '+f2(lv(p,'minParting',v.seam,v.src))+' m, kept in the section'}}
+  const groups=[],cnt={};let cur=null;
+  for(const v of L){if(v.mat==='coal'){if(!cur||cur.seam!==v.seam){cnt[v.seam]=(cnt[v.seam]||0)+1;cur={seam:v.seam,id:v.seam+'-'+cnt[v.seam],list:[]};groups.push(cur)}v.ws=cur.id;cur.list.push(v);if(v.note==='From the seam model')v.note='Grouped into '+cur.id}else cur=null}
+  for(const g of groups){const t=g.list.reduce((a,v)=>a+v.bot-v.top,0),mm=lv(p,'minMine',g.seam,null);if(t<mm)g.list.forEach(toWaste('Section '+f2(t)+' m, under the '+f2(mm)+' m minimum ('+g.seam+')'))}
+  return{L}},
+ ld:(b,L,p)=>{L=cp(L);
+  for(const g of Object.values(wsStats(L))){const t=g.bot-g.top,sm=g.id.split('-')[0],rp=at(L,g.top+1e-6).src,fp=at(L,g.bot-1e-6).src;
+   const[rl,rlv]=lk(p,'roofLoss',sm,rp),[fl,flv]=lk(p,'floorLoss',sm,fp),rdl=lv(p,'roofDil',sm,rp),fdl=lv(p,'floorDil',sm,fp);
+   if(t<=rl+fl+0.05){L=setRange(L,g.top,g.bot,toWaste('Lost: section thinner than roof plus floor loss'));continue}
+   L=setRange(L,g.top,g.top+rl,toWaste('Roof loss '+f2(rl)+' m ('+rlv+')'));
+   L=setRange(L,g.bot-fl,g.bot,toWaste('Floor loss '+f2(fl)+' m ('+flv+')'));
+   L=setRange(L,g.top-rdl,g.top,v=>v.mat==='waste'?(v.mat='coal',v.ws=g.id,v.note='Roof dilution '+f2(rdl)+' m from '+v.src,v):v);
+   L=setRange(L,g.bot,g.bot+fdl,v=>v.mat==='waste'?(v.mat='coal',v.ws=g.id,v.note='Floor dilution '+f2(fdl)+' m from '+v.src,v):v)}
+  return{L}},
+ cut:(b,L,p)=>{L=cp(L);const st=wsStats(L);for(const id in st){const s=st[id],co=lv(p,'cutoff',id.split('-')[0],null);if(s.ash>co)for(const v of L)if(v.ws===id)toWaste(id+' ROM ash '+f1(s.ash)+' % over the '+co+' % cut-off')(v)}return{L}},
+ rd:(b,L,p)=>{const f={};for(const s of Object.values(wsStats(L))){const mi=lv(p,'mIs',s.id.split('-')[0],null);f[s.id]={rd_ad:s.rd,rd_is:s.rd*97/(100+s.rd*(mi-3)-mi)}};return{L,fields:f}},
+ prod:(b,L,p,F,yf)=>{const f={};for(const s of Object.values(wsStats(L))){const y=yf(s.ash);f[s.id]={rom_t:s.t,rom_ash:s.ash,yield:y*p.plantEff,product_t:s.t*y*p.plantEff}}return{L,fields:f}},
+ top:(b,L,p)=>({L:setRange(cp(L),0,p.topsoil,v=>v.mat==='waste'?(v.proc='topsoil',v.note='Topsoil, top '+f2(p.topsoil)+' m',v):v)}),
+ led:(b,L,p,F)=>{let rom=0,pr=0,w=0,ts=0;for(const v of L){const vol=(v.bot-v.top)*AREA;if(v.mat==='coal')rom+=vol*v.rd;else if(v.proc==='topsoil')ts+=vol;else w+=vol}
+  for(const k in F)if(F[k].product_t)pr+=F[k].product_t;
+  const lines=[['Product revenue',pr,'t',p.price,1],['ROM mine and process',rom,'t',p.costRom,-1],['Waste',w,'bcm',p.costWaste,-1],['Topsoil',ts,'bcm',p.costTop,-1]];
+  return{L,ledger:{lines,margin:lines.reduce((a,l)=>a+l[4]*l[1]*l[3],0)}}},
+ out:(b,L)=>({L})};
+
+function mergeF(a,b){const m={};for(const k in a)m[k]={...a[k]};for(const k in b)m[k]={...(m[k]||{}),...b[k]};return m}
+function moves(A,B){const r={c2w:0,w2c:0,w2t:0};if(!A.length)return r;const ds=[...new Set([...A,...B].flatMap(v=>[v.top,v.bot]))].sort((a,b)=>a-b);
+ for(let i=0;i<ds.length-1;i++){const m=(ds[i]+ds[i+1])/2,len=ds[i+1]-ds[i],a=at(A,m),b=at(B,m),t=len*AREA*a.rd;
+  if(a.mat==='coal'&&b.mat==='waste')r.c2w+=t;else if(a.mat==='waste'&&b.mat==='coal')r.w2c+=t;if(b.proc==='topsoil'&&a.proc!=='topsoil')r.w2t+=len*AREA}return r}
+function totals(per){const T={ct:0,ca:0,wv:0,tv:0,pt:0,mg:0,c2w:0,w2c:0,w2t:0};
+ for(const x of per){for(const v of x.L){const vol=(v.bot-v.top)*AREA;if(v.mat==='coal'){const t=vol*v.rd;T.ct+=t;T.ca+=t*v.ash}else{T.wv+=vol;if(v.proc==='topsoil')T.tv+=vol}}
+  for(const k in x.F)if(x.F[k].product_t)T.pt+=x.F[k].product_t;if(x.ledger)T.mg+=x.ledger.margin;T.c2w+=x.mv.c2w;T.w2c+=x.mv.w2c;T.w2t+=x.mv.w2t}
+ T.ash=T.ct?T.ca/T.ct:0;return T}
+function run(pit,p,yf,prev,from){const steps=prev&&from>0?prev.steps.slice(0,from):[];
+ for(let k=steps.length;k<STEPS.length;k++){const t0=performance.now(),s=STEPS[k],per=[];
+  for(let bi=0;bi<pit.length;bi++){const pr=k?steps[k-1].per[bi]:{L:[],F:{},ledger:null};const o=RUN[s.id](pit[bi],pr.L,p,pr.F,yf);
+   per.push({L:o.L,F:o.fields?mergeF(pr.F,o.fields):pr.F,fields:o.fields||null,ledger:o.ledger||pr.ledger,mv:moves(pr.L,o.L)})}
+  const st={per,ms:performance.now()-t0};st.T=totals(per);steps.push(st)}
+ return{steps}}
+function compile(src){const ids=src.match(/[A-Za-z_]\w*/g)||[];
+ if(/[^\w\s.+\-*/(),]/.test(src)||!ids.every(w=>['rom_ash','clamp','min','max'].includes(w)))throw new Error('Use numbers, rom_ash, + − × ÷, brackets and clamp, min, max');
+ const f=new Function('rom_ash','clamp','min','max','return ('+src+')');const t=f(15,clamp,Math.min,Math.max);
+ if(typeof t!=='number'||!isFinite(t))throw new Error('Gives no number at 15 % ash');return a=>f(a,clamp,Math.min,Math.max)}
+
+function loadSets(){try{const s=JSON.parse(localStorage.getItem('rf-sets')||'null');if(Array.isArray(s))return s}catch(e){}return[{id:'c1',name:'Coal quality',keys:['rom_t','ash','vm','ts','cv','rd_is','yld','prod_t']}]}
+function saveSets(){try{localStorage.setItem('rf-sets',JSON.stringify(S.custom))}catch(e){}}
+const pit=makePit();
+const S={colset:'step',mode:'inline',onlyChg:false,q:'',open:{},fmapDone:0,ci:0,step:3,bi:pit.findIndex(b=>b.id==='S07-B4'),depth:null,base:{...P0},expr:EXPR0,yf:compile(EXPR0),err:'',cases:CASES.map(c=>({name:c.name,ov:{...c.ov},tov:JSON.parse(JSON.stringify(c.tov)),run:null})),tbase:JSON.parse(JSON.stringify(T0)),addRows:[],groupBy:'ws',custom:loadSets(),edit:null,since:null,lastRun:null};
+const par=ci=>{const c=S.cases[ci],T={};for(const k in S.tbase)T[k]={...S.tbase[k],...(c.tov[k]||{})};return{...S.base,...c.ov,T}};
+function ensure(ci,from){const c=S.cases[ci];const t0=performance.now();c.run=run(pit,par(ci),S.yf,c.run,c.run?from:0);return performance.now()-t0}
+const R=()=>S.cases[S.ci].run;
+const kp=T=>({rom:T.ct/1e6,ash:T.ash,prod:T.pt/1e6,waste:T.wv/1e6,sr:T.ct?T.wv/T.ct:0,mg:T.mg/1e6});
+const $=id=>document.getElementById(id);
+
+function renderCases(){$('cases').innerHTML=S.cases.map((c,i)=>'<button type="button" data-ci="'+i+'" aria-pressed="'+(i===S.ci)+'">'+c.name+((Object.keys(c.ov).length||Object.keys(c.tov).length)&&i?' <span class="ov" aria-label="has overrides">●</span>':'')+'</button>').join('')}
+function renderHead(){const T=R().steps[STEPS.length-1].T,K=kp(T),c=S.cases[S.ci];
+ let ref=null,lab='';if(S.ci){ref=kp(S.cases[0].run.steps[STEPS.length-1].T);lab='vs Base'}else if(S.since){ref=S.since;lab='since edit'}
+ $('finding').textContent=c.name+': '+K.rom.toFixed(2)+' Mt ROM coal at '+f1(K.ash)+' % ash, '+money(K.mg)+' margin';
+ const items=[['rom','ROM coal','Mt',2,1],['ash','ROM ash','%',1,-1],['prod','Product','Mt',2,1],['waste','Waste','Mbcm',1,-1],['sr','Strip ratio','bcm/t',2,-1],['mg','Margin','A$M',0,1]];
+ $('kpis').innerHTML=items.map(([k,l,u,d,good])=>{let em='<em class="was">&nbsp;</em>';if(ref){const dv=K[k]-ref[k];if(Math.abs(dv)>=Math.pow(10,-d)/2)em='<em class="'+(dv*good>0?'up':'dn')+'">'+(dv>0?'+':'−')+(k==='mg'?'A$'+Math.abs(dv).toFixed(0)+'M':Math.abs(dv).toFixed(d))+' '+lab+'</em>';else em='<em class="was">no change '+lab+'</em>'}
+  return '<div class="kpi"><span>'+l+'</span><b>'+(k==='mg'?money(K[k]):K[k].toFixed(d)+' '+u)+'</b>'+em+'</div>'}).join('');
+ const ms=R().steps.reduce((a,s)=>a+s.ms,0);$('runinfo').textContent=STEPS.length+' steps · '+pit.length+' blocks · '+ms.toFixed(1)+' ms';
+ const bal=Math.abs((totVol(1))-(totVol(STEPS.length-1)))<1;
+ $('balance').textContent=bal?'✓ Balanced: no ground made or lost':'Balance check failed';$('balance').className=bal?'ok':'dn'}
+function totVol(k){let v=0;for(const x of R().steps[k].per)for(const u of x.L)v+=(u.bot-u.top)*AREA;return v}
+
+function renderSpine(ran){let html='',stage='';STEPS.forEach((s,k)=>{if(s.stage!==stage){stage=s.stage;html+='<div class="stage">'+stage+'</div>'}
+ const ms=R().steps[k].ms;html+='<button type="button" class="step'+(ran&&k>=ran?' ran':'')+'" data-k="'+k+'" aria-current="'+(k===S.step)+'"><span class="n">'+k+'</span><span>'+s.name+'<br><span class="tag '+s.kind+'">'+KIND[s.kind]+'</span></span><span class="ms">'+(k?ms.toFixed(1)+' ms':'')+'</span></button>'});
+ $('spine').innerHTML=html}
+
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function hl(code){return esc(code).split('\n').map(l=>{const i=l.indexOf('#');const a=i<0?l:l.slice(0,i),c=i<0?'':'<span class="c">'+l.slice(i)+'</span>';
+ return a.replace(/\b(def|return)\b/g,'<span class="k">$1</span>').replace(/\b(\d+\.?\d*)\b/g,'<span class="nu">$1</span>')+c}).join('\n')}
+function desc(v){if(!v)return'—';if(v.proc==='topsoil')return'Topsoil';return v.mat==='coal'?(v.ws?'ROM · '+v.ws:'Coal'):'Waste'}
+function cls(v){return v.proc==='topsoil'?'to-t':v.mat==='coal'?(v.rock==='coal'?'':'to-c'):(v.rock==='coal'?'to-w':'')}
+function diffRows(A,B){const ds=[...new Set([...A,...B].flatMap(v=>[v.top,v.bot]))].sort((a,b)=>a-b),rows=[];
+ for(let i=0;i<ds.length-1;i++){const m=(ds[i]+ds[i+1])/2,a=at(A,m),b=at(B,m);if(desc(a)===desc(b))continue;const last=rows[rows.length-1];
+  if(last&&Math.abs(last.bot-ds[i])<1e-9&&last.src===b.src&&last.from===desc(a)&&last.to===desc(b)){last.bot=ds[i+1];continue}
+  rows.push({top:ds[i],bot:ds[i+1],src:b.src,from:desc(a),to:desc(b),c:cls(b),note:b.note})}return rows}
+
+function renderInsp(){const s=STEPS[S.step],k=S.step,p=par(S.ci),x=R().steps[k].per[S.bi],pv=k?R().steps[k-1].per[S.bi]:null,b=pit[S.bi];
+ let h='<div class="top"><h2>'+k+' · '+s.name+'</h2><span class="tag '+s.kind+'">'+KIND[s.kind]+'</span></div><p class="rule">'+s.rule+'</p>';
+ h+='<dl class="io"><dt>Reads</dt><dd>'+s.reads.map(r=>'<span class="chip">'+esc(r)+'</span>').join('')+'</dd><dt>Writes</dt><dd>'+(s.writes.length?s.writes.map(r=>'<span class="chip">'+esc(r)+'</span>').join(''):'—')+'</dd></dl>';
+ if(s.code)h+='<pre class="code">'+hl(s.code)+'</pre>';
+ if(s.editable)h+='<pre class="code">'+hl('def product_t(ws, p):\n    rom_ash = ws.rom_ash   # % ad, after dilution\n')+'    yld = <input class="expr" id="expr" aria-label="Yield formula" spellcheck="false">\n'+hl('    return ws.rom_t * yld * p.plant_eff')+'</pre>'+(S.err?'<p class="err">'+esc(S.err)+'</p>':'');
+ const sc=s.params.filter(k=>!(k in T0)),tb=s.params.filter(k=>k in T0);
+ h+=ptable(tb);
+ if(sc.length)h+='<div class="set">'+sc.map(key=>{const[l,u,mn,mx,st]=PDEF[key],ov=S.ci&&key in S.cases[S.ci].ov,ch=!S.ci&&S.base[key]!==P0[key];
+  return '<div><label for="p-'+key+'">'+l+'<b>'+fmt(p[key],st)+(u?' '+u:'')+(ov||ch?'<span class="ov" title="'+(ov?'Changed in this case':'Changed from default')+'">●</span><button type="button" class="rst" data-rst="'+key+'">reset</button>':'')+'</b></label><input type="range" id="p-'+key+'" data-key="'+key+'" min="'+mn+'" max="'+mx+'" step="'+st+'" value="'+p[key]+'"></div>'}).join('')+'</div>';
+ if(['source','led','out'].includes(s.id))h+='<div class="sub"><h3>'+(s.kind==='ledger'?'Ledger lines':s.id==='out'?'Written to the reserves table':'Inputs')+' in '+b.id+'</h3></div><div class="scroll">'+table(s,x,pv)+'</div>';
+ else h+='<p class="bal" style="margin-top:0">Every unit and field this step touched in '+b.id+' is in the units table below.</p>';
+ const T=R().steps[k].T;
+ if(['ws','ld','cut','top'].includes(s.id))h+='<p class="bal">Across the pit: <b class="to-w">'+(T.c2w/1e6).toFixed(3)+' Mt coal to waste</b>'+(T.w2c?' · <b class="to-c">'+(T.w2c/1e6).toFixed(3)+' Mt rock into ROM</b>':'')+(T.w2t?' · <b class="to-t">'+(T.w2t/1e6).toFixed(2)+' Mbcm labelled topsoil</b>':'')+' · <span class="ok">✓ balances</span></p>';
+ if(s.kind==='formula')h+='<p class="bal">Moves nothing: <span class="ok">✓ every unit unchanged</span></p>';
+ $('insp').innerHTML=h;const e=$('expr');if(e)e.value=S.expr}
+const seamOf=pl=>(pit[0].units.find(u=>u.name===pl)||{}).seam;
+function selUnit(){if(S.depth===null)return null;const v=at(R().steps[Math.max(1,S.step)].per[S.bi].L,S.depth);return v?{seam:v.seam,src:v.src}:null}
+function ptable(keys){if(!keys.length)return'';const p=par(S.ci),c=S.cases[S.ci],plies=pit[0].units.filter(u=>u.seam).map(u=>u.name);
+ const plyRows=plies.filter(pl=>keys.some(k=>pl in p.T[k])||S.addRows.includes(pl));
+ const rows=[['_','Default',0]];for(const sm of SEAMS){rows.push([sm,sm+' seam',1]);for(const pl of plyRows)if(seamOf(pl)===sm)rows.push([pl,pl,2])}
+ const sel=selUnit(),eff={};if(sel)for(const k of keys)eff[k]=lk(p,k,sel.seam,sel.src)[1];
+ let h='<div class="sub"><h3>Parameters by seam and ply</h3><span>a ply uses its own row, then its seam, then the default</span></div><div class="scroll"><table class="pt"><thead><tr><th>Applies to</th>'+keys.map(k=>'<th>'+PDEF[k][0]+'<small>'+PDEF[k][1]+'</small></th>').join('')+'</tr></thead><tbody>';
+ for(const[id,lab,lvl]of rows){const use=sel&&(id==='_'||id===sel.seam||id===sel.src);
+  h+='<tr class="lv'+lvl+(use?' use':'')+'"><td>'+lab+'</td>'+keys.map(k=>{const own=id in p.T[k],inh=lk(p,k,lvl===2?seamOf(id):lvl===1?id:null,lvl===2?id:null)[0],ov=S.ci&&c.tov[k]&&id in c.tov[k],isEff=sel&&eff[k]===(id==='_'?'default':id);
+   return'<td class="r'+(isEff?' eff':'')+'"><input type="number" inputmode="decimal" step="'+PDEF[k][4]+'" data-tk="'+k+'" data-row="'+id+'" value="'+(own?p.T[k][id]:'')+'" placeholder="'+fmt(inh,PDEF[k][4])+'" aria-label="'+PDEF[k][0]+', '+lab+'">'+(ov?'<span class="ov" title="Changed in this case">●</span>':'')+'</td>'}).join('')+'</tr>'}
+ const left=plies.filter(pl=>!plyRows.includes(pl));
+ h+='</tbody></table></div><div class="ptools">'+(left.length?'<select id="addply" aria-label="Add a ply row"><option value="">Add a ply row…</option>'+left.map(pl=>'<option>'+pl+'</option>').join('')+'</select>':'')+'<span class="was">'+(sel?'Outlined: the values '+esc(sel.src)+' uses. Faint numbers are inherited; type to set, clear to inherit.':'Faint numbers are inherited; type to set, clear to inherit. Pick a unit to see which cells it uses.')+'</span></div>';
+ return h}
+function table(s,x,pv){if(s.id==='source'){const b=pit[S.bi];return'<table class="stack"><thead><tr><th>Input</th><th>For this block</th></tr></thead><tbody><tr><td data-l="Input">Block solid</td><td data-l="Block">'+b.id+', '+fk(AREA)+' m², '+f1(b.depth)+' m deep</td></tr><tr><td data-l="Input">Seam model</td><td data-l="Block">GU, GM, GL with 15 plies and partings</td></tr><tr><td data-l="Input">Parameter set</td><td data-l="Block">Demo 2026, '+Object.keys(P0).length+' values, case '+S.cases[S.ci].name+'</td></tr></tbody></table>'}
+ if(s.id==='init')return'<table class="stack"><thead><tr><th>Unit</th><th class="r">From m</th><th class="r">Thick m</th><th class="r">Ash %</th><th class="r">RD</th></tr></thead><tbody>'+x.L.map(v=>'<tr data-d="'+((v.top+v.bot)/2)+'"'+(hit(v.top,v.bot)?' class="hit"':'')+'><td data-l="Unit">'+v.src+'</td><td class="r" data-l="From m">'+f2(v.top)+'</td><td class="r" data-l="Thick m">'+f2(v.bot-v.top)+'</td><td class="r" data-l="Ash %">'+f1(v.ash)+'</td><td class="r" data-l="RD">'+f2(v.rd)+'</td></tr>').join('')+'</tbody></table>';
+ if(s.kind==='formula'){const keys=s.id==='rd'?[['rd_ad','RD ad',2],['rd_is','RD in situ',3]]:[['rom_t','ROM t',-1],['rom_ash','ROM ash %',1],['yield','Yield',3],['product_t','Product t',-1]];
+  return'<table class="stack"><thead><tr><th>Section</th>'+keys.map(q=>'<th class="r">'+q[1]+'</th>').join('')+'</tr></thead><tbody>'+Object.entries(x.fields).map(([id,f])=>'<tr><td data-l="Section">'+id+'</td>'+keys.map(q=>'<td class="r" data-l="'+q[1]+'">'+(q[2]<0?fk(f[q[0]]):f[q[0]].toFixed(q[2]))+'</td>').join('')+'</tr>').join('')+'</tbody></table>'}
+ if(s.id==='out'){let wv=0;for(const v of x.L)if(v.mat==='waste')wv+=(v.bot-v.top)*AREA;return'<table class="stack"><thead><tr><th>Node</th><th class="r">ROM t</th><th class="r">ROM ash %</th><th class="r">Product t</th></tr></thead><tbody>'+Object.entries(x.F).filter(([id,f])=>f.rom_t).map(([id,f])=>'<tr><td data-l="Node">'+pit[S.bi].id+'\\'+id+'</td><td class="r" data-l="ROM t">'+fk(f.rom_t)+'</td><td class="r" data-l="ROM ash %">'+f1(f.rom_ash)+'</td><td class="r" data-l="Product t">'+fk(f.product_t)+'</td></tr>').join('')+'<tr><td data-l="Node">'+pit[S.bi].id+'\\Waste</td><td class="r" data-l="ROM t">'+fk(wv)+' bcm</td><td></td><td></td></tr><tr><td data-l="Node">Margin</td><td class="r" data-l="ROM t">'+money(x.ledger.margin/1e6)+'</td><td></td><td></td></tr></tbody></table>'}
+ if(s.kind==='ledger'){const lg=x.ledger;return'<table class="stack"><thead><tr><th>Line</th><th class="r">Quantity</th><th class="r">Rate</th><th class="r">Value A$</th></tr></thead><tbody>'+lg.lines.map(l=>'<tr><td data-l="Line">'+l[0]+'</td><td class="r" data-l="Quantity">'+fk(l[1])+' '+l[2]+'</td><td class="r" data-l="Rate">'+l[3].toFixed(l[3]<20?1:0)+'</td><td class="r '+(l[4]>0?'up':'dn')+'" data-l="Value A$">'+(l[4]>0?'':'−')+fk(l[1]*l[3])+'</td></tr>').join('')+'<tr><td data-l="Line"><b>Margin</b></td><td></td><td></td><td class="r '+(lg.margin>=0?'up':'dn')+'" data-l="Value A$"><b>'+(lg.margin<0?'−':'')+fk(Math.abs(lg.margin))+'</b></td></tr></tbody></table>'}
+ const rows=diffRows(pv.L,x.L);if(!rows.length)return'<p class="was">Nothing changed in this block.</p>';
+ return'<table class="stack"><thead><tr><th>Unit</th><th class="r">Depth m</th><th>Was</th><th>Now</th><th>Why</th></tr></thead><tbody>'+rows.map(r=>'<tr data-d="'+((r.top+r.bot)/2)+'"'+(hit(r.top,r.bot)?' class="hit"':'')+'><td data-l="Unit">'+r.src+'</td><td class="r" data-l="Depth m">'+f2(r.top)+'–'+f2(r.bot)+'</td><td class="was" data-l="Was">'+r.from+'</td><td class="'+r.c+'" data-l="Now">'+r.to+'</td><td data-l="Why">'+esc(r.note)+'</td></tr>').join('')+'</tbody></table>'}
+const hit=(a,b)=>S.depth!==null&&S.depth>=a&&S.depth<b;
+function journey(){const d=S.depth;let prev='';const chips=STEPS.slice(1).map((s,i)=>{const v=at(R().steps[i+1].per[S.bi].L,d),ds=desc(v),chg=ds!==prev;prev=ds;
+ return'<div class="jc'+(chg&&i?' chg':'')+'"><small>'+(i+1)+' · '+s.short+'</small><span class="'+cls(v)+'">'+ds+'</span></div>'}).join('');
+ const v=at(R().steps[1].per[S.bi].L,d);
+ return'<div class="sub" style="margin-top:4px"><h3>Journey through the flow</h3><span>red edge: changed there</span></div><div class="journey">'+chips+'</div>'}
+
+function metric(k,bi){const s=STEPS[k].id,x=R().steps[k].per[bi];
+ if(s==='led'||s==='out')return x.ledger.margin/1e6;if(s==='prod'){let t=0;for(const q in x.F)t+=x.F[q].product_t||0;return t/1e3}
+ if(s==='rd'){let a=0,n=0;for(const q in x.F)if(x.F[q].rd_is){a+=x.F[q].rd_is;n++}return n?a/n:0}
+ if(s==='ws'||s==='ld'||s==='cut')return(x.mv.c2w+x.mv.w2c)/1e3;if(s==='top')return x.mv.w2t/1e3;
+ let t=0;for(const v of x.L)if(v.mat==='coal')t+=(v.bot-v.top)*AREA*v.rd;return t/1e3}
+const MT={source:['ROM coal','kt'],init:['In situ coal','kt'],ws:['Coal moved','kt'],ld:['Coal moved','kt'],cut:['Coal moved','kt'],rd:['Mean RD in situ',''],prod:['Product','kt'],top:['Topsoil','kbcm'],led:['Margin','A$M'],out:['Margin','A$M']};
+function renderMap(){const k=S.step,id=STEPS[k].id,vals=pit.map((b,i)=>metric(k,i)),mn=Math.min(...vals),mx=Math.max(...vals),div=id==='led'||id==='out';
+ const amax=Math.max(Math.abs(mn),Math.abs(mx))||1;
+ const col=v=>div?(v>=0?'color-mix(in oklab,var(--pos) '+Math.round(15+85*v/amax)+'%,var(--bg))':'color-mix(in oklab,var(--loss) '+Math.round(15+85*-v/amax)+'%,var(--bg))'):'color-mix(in oklab,var(--seqHi) '+(mx>mn?Math.round(100*(v-mn)/(mx-mn)):0)+'%,var(--seqLo))';
+ const cells=[];for(let j=0;j<NB;j++)for(let i=0;i<NS;i++){const bi=i*NB+j;cells.push('<button type="button" data-bi="'+bi+'" style="background:'+col(vals[bi])+'" aria-pressed="'+(bi===S.bi)+'" aria-label="'+pit[bi].id+' '+vals[bi].toFixed(2)+'" title="'+pit[bi].id+': '+vals[bi].toFixed(2)+' '+MT[id][1]+'"></button>')}
+ $('map').innerHTML=cells.join('');$('mapTitle').textContent=MT[id][0]+' by block';$('mapUnit').textContent='strips S01–S14 left to right'+(MT[id][1]?' · '+MT[id][1]:'');
+ $('legBar').style.background=div?'linear-gradient(90deg,var(--loss),var(--bg),var(--pos))':'linear-gradient(90deg,var(--seqLo),var(--seqHi))';
+ $('legLo').textContent=(div?-amax:mn).toFixed(div?1:id==='rd'?2:0);$('legHi').textContent=(div?amax:mx).toFixed(div?1:id==='rd'?2:0)}
+
+const ROCK={coal:'var(--coal)',ob:'var(--ob)',ib:'var(--ib)',part:'var(--part)',floor:'var(--floor)'};
+function renderLog(){const el=$('log'),W=el.clientWidth||330,b=pit[S.bi],k=S.step,K=1/0.03,B=22;
+ const seg=[];let y=8;for(const u of b.units){const t=u.bot-u.top;if(u.rock!=='coal'&&u.rock!=='part'&&t>1.4){seg.push([u.top,u.top+0.5,y,y+0.5*K]);y+=0.5*K;seg.push([u.top+0.5,u.bot-0.5,y,y+B,1,t]);y+=B;seg.push([u.bot-0.5,u.bot,y,y+0.5*K]);y+=0.5*K}else{seg.push([u.top,u.bot,y,y+t*K]);y+=t*K}}
+ const H=y+8,ym=d=>{for(const s of seg)if(d<=s[1]+1e-9)return s[2]+(s[3]-s[2])*(d-s[0])/(s[1]-s[0]||1);return H-8};
+ const narrow=W<300,lw=narrow?36:44,cw=narrow?46:58,x1=lw,x2=lw+cw+26,lx=x2+cw+8;
+ const A=k?R().steps[k-1].per[S.bi].L:[],Bl=R().steps[k].per[S.bi].L;
+ const col=(L,x)=>L.map(v=>{const y0=ym(v.top),y1=ym(v.bot),h=Math.max(1,y1-y0),base=v.proc==='topsoil'?'var(--topsoil)':ROCK[v.rock];
+  let r='<rect x="'+x+'" y="'+y0.toFixed(1)+'" width="'+cw+'" height="'+h.toFixed(1)+'" style="fill:'+base+'" data-d="'+((v.top+v.bot)/2)+'"/>';
+  if(v.rock==='coal'&&v.mat==='waste')r+='<rect x="'+x+'" y="'+y0.toFixed(1)+'" width="'+cw+'" height="'+h.toFixed(1)+'" fill="url(#hl)" pointer-events="none"/>';
+  if(v.rock!=='coal'&&v.mat==='coal')r+='<rect x="'+x+'" y="'+y0.toFixed(1)+'" width="'+cw+'" height="'+h.toFixed(1)+'" fill="url(#hd)" pointer-events="none"/>';return r}).join('');
+ let s='<svg viewBox="0 0 '+W+' '+H+'" height="'+H+'" role="img" aria-label="Strip log of '+b.id+' before and after '+STEPS[k].name+'"><defs><pattern id="hl" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="2.4" height="6" style="fill:var(--loss)"/></pattern><pattern id="hd" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="2.4" height="6" style="fill:var(--coal)"/></pattern></defs>';
+ s+=(A.length?col(A,x1):'<rect x="'+x1+'" y="8" width="'+cw+'" height="'+(H-16)+'" style="fill:var(--rule)"/>')+col(Bl,x2);
+ s+='<rect x="'+x1+'" y="8" width="'+cw+'" height="'+(H-16)+'" fill="none" style="stroke:var(--coalEdge)" stroke-width=".8"/><rect x="'+x2+'" y="8" width="'+cw+'" height="'+(H-16)+'" fill="none" style="stroke:var(--coalEdge)" stroke-width=".8"/>';
+ for(const g of seg)if(g[4]){const ym2=(g[2]+g[3])/2;for(const x of[x1,x2])s+='<path d="M'+x+' '+(ym2+3)+'l'+cw/4+' -6l'+cw/4+' 6l'+cw/4+' -6l'+cw/4+' 6" fill="none" style="stroke:var(--bg)" stroke-width="2.5"/>';s+='<text x="'+(x2+cw/2)+'" y="'+(ym2-6)+'" text-anchor="middle" style="fill:#1a1a1a;font-size:13px">'+f1(g[5])+' m</text>'}
+ if(A.length)for(const r of diffRows(A,Bl)){const y0=ym(r.top),y1=ym(r.bot);s+='<path d="M'+(x1+cw+3)+' '+((y0+y1)/2).toFixed(1)+'H'+(x2-3)+'" style="stroke:var(--loss)" stroke-width="1.5" marker-end="url(#ar)"/><circle cx="'+(x2-4)+'" cy="'+((y0+y1)/2).toFixed(1)+'" r="2.5" style="fill:var(--loss)"/>'}
+ const ll=[];for(const u of b.units)if((u.rock==='coal'||u.rock==='part')&&u.bot-u.top>=0.25)ll.push([ym((u.top+u.bot)/2),u.name]);
+ dec(ll);for(const[yy,t]of ll)s+='<text x="'+(x1-6)+'" y="'+(yy+4).toFixed(1)+'" text-anchor="end">'+t+'</text>';
+ const st=Object.values(wsStats(Bl)).map(g=>[ym((g.top+g.bot)/2),g.id+' · '+f1(g.ash)+'%',ym(g.top),ym(g.bot)]);
+ for(const g of st)s+='<path d="M'+(x2+cw+3)+' '+g[2]+'h4V'+g[3]+'h-4" fill="none" style="stroke:var(--pos)" stroke-width="1.2"/>';
+ dec(st);if(!narrow)for(const g of st)s+='<text x="'+(lx+6)+'" y="'+(g[0]+4).toFixed(1)+'">'+g[1]+'</text>';
+ if(S.depth!==null){const yd=ym(S.depth);s+='<path d="M'+(x1-4)+' '+yd+'H'+(x2+cw+4)+'" style="stroke:var(--loss)" stroke-dasharray="3 3" stroke-width="1.5"/>'}
+ s+='</svg>';el.innerHTML='<div class="leg" style="justify-content:flex-start;gap:0"><span style="width:'+x1+'px"></span><span style="width:'+(cw+26)+'px">Before</span><span>After '+STEPS[k].short.toLowerCase()+'</span></div>'+s;
+ const T=b.units,ob=T[0].bot-T[0].top;$('blkName').textContent=b.id;$('blkInfo').textContent=f1(b.depth)+' m to floor · '+f1(ob)+' m overburden'}
+function dec(arr){arr.sort((a,b)=>a[0]-b[0]);for(let i=1;i<arr.length;i++)if(arr[i][0]-arr[i-1][0]<14)arr[i][0]=arr[i-1][0]+14}
+
+function renderRiver(){const s=$('rsvg'),W=s.clientWidth,H=s.clientHeight;if(!W)return;const n=STEPS.length-1,L=W<520?40:84,Rm=W<520?20:40,small=W<560;
+ const xs=k=>L+(k-1)*(W-L-Rm)/(n-1),bw=small?10:18,cTop=44,Hc=(H-44-34-56)/2,cBase=cTop+Hc,wTop=cBase+56,Hw=Hc;
+ const st=R().steps,mxc=Math.max(...st.slice(1).map(x=>x.T.ct))*1.04,mxw=Math.max(...st.slice(1).map(x=>x.T.wv))*1.04,sc=Hc/mxc,sw=Hw/mxw;
+ let o='';const sx=xs(S.step);if(S.step>0)o+='<rect x="'+(sx-bw/2-12)+'" y="4" width="'+(bw+24)+'" height="'+(H-8)+'" rx="8" style="fill:var(--sel)"/>';
+ if(!small){o+='<text x="0" y="'+(cTop+Hc/2+4)+'">ROM coal</text><text x="0" y="'+(wTop+Hw/2+4)+'">Waste</text>'}
+ for(let k=1;k<=n;k++){const T=st[k].T,x=xs(k),hc=T.ct*sc,hw=T.wv*sw;
+  if(k>1){const P=st[k-1].T,xp=xs(k-1),hp=P.ct*sc,hwp=P.wv*sw;
+   o+='<path d="M'+(xp+bw/2)+' '+(cBase-hp)+'L'+(x-bw/2)+' '+(cBase-hc)+'V'+cBase+'H'+(xp+bw/2)+'Z" style="fill:var(--coal)" opacity=".14"/>';
+   o+='<path d="M'+(xp+bw/2)+' '+wTop+'L'+(x-bw/2)+' '+wTop+'V'+(wTop+hw)+'L'+(xp+bw/2)+' '+(wTop+hwp)+'Z" style="fill:var(--ib)" opacity=".35"/>';
+   const xm=(xp+x)/2;
+   if(T.c2w>1){const w=Math.max(2,T.c2w*sc);o+='<path d="M'+(xp+bw/2)+' '+(cBase-w/2)+'C'+xm+' '+(cBase-w/2)+' '+xm+' '+(wTop+2)+' '+(x-bw/2)+' '+(wTop+2)+'" fill="none" style="stroke:var(--loss)" stroke-width="'+w+'" opacity=".85"/>';if(!small||k===S.step)o+='<text class="halo" x="'+xm+'" y="'+(cBase+20)+'" text-anchor="middle" style="fill:var(--loss)">−'+(T.c2w/1e6).toFixed(2)+'</text>'}
+   if(T.w2c>1){const w=Math.max(2,T.w2c*sc);o+='<path d="M'+(xp+bw/2)+' '+(wTop+4)+'C'+xm+' '+(wTop+4)+' '+xm+' '+(cBase-w/2)+' '+(x-bw/2)+' '+(cBase-w/2)+'" fill="none" style="stroke:var(--dil)" stroke-width="'+w+'" opacity=".9"/>';if(!small||k===S.step)o+='<text class="halo" x="'+xm+'" y="'+(wTop-8)+'" text-anchor="middle" style="fill:var(--dil)">+'+(T.w2c/1e6).toFixed(2)+'</text>'}}
+  o+='<rect x="'+(x-bw/2)+'" y="'+(cBase-hc)+'" width="'+bw+'" height="'+hc+'" rx="2" style="fill:var(--coal);stroke:var(--coalEdge)"/>';
+  if(T.pt){const hp=T.pt*sc;o+='<rect x="'+(x-bw/2)+'" y="'+(cBase-hp)+'" width="'+bw+'" height="'+hp+'" rx="2" style="fill:var(--gold)"/>'}
+  o+='<rect x="'+(x-bw/2)+'" y="'+wTop+'" width="'+bw+'" height="'+hw+'" rx="2" style="fill:var(--ib)"/>';
+  if(T.tv){o+='<rect x="'+(x-bw/2)+'" y="'+wTop+'" width="'+bw+'" height="'+Math.max(3,T.tv*sw)+'" style="fill:var(--topsoil)"/>'}
+  o+='<text x="'+x+'" y="24" text-anchor="middle" style="font-weight:'+(k===S.step?600:400)+'">'+(small?k:STEPS[k].short)+'</text>';
+  if(!small||k===S.step){o+='<text class="halo" x="'+x+'" y="'+(cBase-hc-6)+'" text-anchor="middle">'+(T.ct/1e6).toFixed(2)+'</text><text x="'+x+'" y="'+(H-12)+'" text-anchor="middle">'+(T.wv/1e6).toFixed(1)+'</text>'}
+  if(T.mg&&(!small||k===S.step))o+='<text class="halo" x="'+x+'" y="'+(cBase-hc-22)+'" text-anchor="middle" style="fill:'+(T.mg<0?'var(--loss)':'var(--pos)')+';font-weight:600">'+money(T.mg/1e6)+'</text>';
+  o+='<rect x="'+(x-(W-L-Rm)/(n-1)/2)+'" y="0" width="'+((W-L-Rm)/(n-1))+'" height="'+H+'" fill="transparent" data-k="'+k+'" style="cursor:pointer"><title>'+STEPS[k].name+'</title></rect>'}
+ s.innerHTML=o}
+const ro=new ResizeObserver(()=>{renderRiver();renderLog()});ro.observe($('rsvg'));ro.observe($('log'));
+
+const FIELDS=[
+ ['top','From','m','Geometry',2,'min'],['thick','Thickness','m','Geometry',2,'sum'],
+ ['vol','Volume','bcm','Quantity',-1,'sum'],['t','Tonnes','t','Quantity',-1,'sum'],['rom_t','Coal / ROM','t','Quantity',-1,'sum'],['waste_bcm','Waste','bcm','Quantity',-1,'sum'],['prod_t','Product','t','Quantity',-1,'sum'],
+ ['rd','RD ad','','Quality',3,'wv'],['rd_is','RD in situ','','Quality',3,'wv'],['ash','Ash ad','%','Quality',1,'wt'],['vm','VM ad','%','Quality',1,'wt'],['ts','TS ad','%','Quality',2,'wt'],['cv','CV gad','MJ/kg','Quality',2,'wt'],['m','Moisture ad','%','Quality',1,'wt'],['yld','Yield','','Quality',3,'wt'],
+ ['mat','Material','','Class',null,'txt'],['ws','Section','','Class',null,'txt'],['proc','Process','','Class',null,'txt'],['note','Audit','','Class',null,'txt']].map(([k,l,u,g,d,agg])=>({k,l,u,g,d,agg}));
+const FK=Object.fromEntries(FIELDS.map(f=>[f.k,f]));
+const COLSETS=[['step','This step'],['qty','Quantities'],['qual','Qualities'],['class','Class and audit'],['all','All '+FIELDS.length]];
+const SETS={qty:['thick','vol','t','rom_t','waste_bcm','prod_t'],qual:['rd','rd_is','ash','vm','ts','cv','m','yld'],class:['mat','ws','proc','note']};
+const iRD=STEPS.findIndex(s=>s.id==='rd'),iPR=STEPS.findIndex(s=>s.id==='prod');
+const unitOf=(b,src)=>b.units.find(u=>u.name===src);
+function fv(key,pc,v,F,k,p){if(!v)return null;const th=pc.bot-pc.top,vol=th*AREA,t=vol*v.rd,rom=v.mat==='coal',f=v.ws&&F[v.ws];
+ switch(key){case'top':return pc.top;case'thick':return th;case'vol':return vol;case't':return t;case'rd':return v.rd;case'ash':return v.ash;case'vm':return v.vm;case'ts':return v.ts;case'cv':return v.cv;case'm':return v.m;
+  case'rom_t':return k>=1?(rom?t:0):null;case'waste_bcm':return k>=1?(rom?0:vol):null;
+  case'rd_is':{if(k<iRD)return null;const mi=lv(p,'mIs',v.seam,v.src);return v.rd*(100-v.m)/(100+v.rd*(mi-v.m)-mi)}
+  case'yld':return k>=iPR&&rom&&f&&f.yield!=null?f.yield:null;
+  case'prod_t':return k>=iPR?(rom&&f&&f.yield!=null?t*f.yield:0):null;
+  case'mat':return v.proc==='topsoil'?'Topsoil':rom?(v.ws?'ROM coal':'Coal'):'Waste';
+  case'ws':return v.ws||'';case'proc':return v.proc==='topsoil'?'Topsoil':'';case'note':return v.note}}
+const RNAME={ob:'Overburden',ib:'Interburden',floor:'Floor'};
+const gkey=v=>{if(!v)return null;const m=S.groupBy;
+ if(m==='seam')return v.seam?v.seam+' seam':(RNAME[v.rock]||'Waste rock');
+ if(m==='ply')return v.src;if(m==='none')return'All units';
+ if(m==='mat')return v.proc==='topsoil'?'Topsoil':v.mat==='coal'?(v.ws?'ROM coal':'Coal'):'Waste';
+ return v.proc==='topsoil'?'Topsoil':v.mat==='coal'?(v.ws||'Coal, no section'):'Waste'};
+const isSec=g=>S.groupBy==='ws'?!!g&&!['Topsoil','Waste','Coal, no section'].includes(g):S.groupBy==='mat'?g==='ROM coal'||g==='Coal':false;
+function fmtv(f,x){if(x===null||x===undefined||x==='')return'—';if(f.d===null)return esc(x);if(f.d<0)return fk(x);return x.toFixed(f.d)}
+const same=(a,b)=>a===b||(typeof a==='number'&&typeof b==='number'&&Math.abs(a-b)<=1e-9*Math.max(1,Math.abs(a)));
+function agg(f,L,side){if(!L.length)return null;
+ if(f.agg==='txt')return null;if(f.agg==='min')return Math.min(...L.map(r=>r.pc.top));
+ const vals=L.map(r=>r[side][f.k]);if(vals.every(v=>v===null))return null;
+ if(f.agg==='sum')return vals.reduce((a,v)=>a+(v||0),0);
+ const wk=f.agg==='wt'?'t':'vol';let a=0,w=0;L.forEach((r,i)=>{if(vals[i]!==null){a+=vals[i]*r[side][wk];w+=r[side][wk]}});return w?a/w:null}
+function buildGrid(){const k=S.step,b=pit[S.bi],p=par(S.ci),cur=R().steps[k].per[S.bi],pre=k?R().steps[k-1].per[S.bi]:null,A=pre?pre.L:[],B=cur.L;
+ if(!B.length)return null;
+ const ds=[...new Set([...A,...B].flatMap(v=>[v.top,v.bot]))].sort((x,y)=>x-y),rows=[];
+ for(let i=0;i<ds.length-1;i++){const pc={top:ds[i],bot:ds[i+1]},m=(pc.top+pc.bot)/2,a=A.length?at(A,m):null,bv=at(B,m),u=unitOf(b,bv.src);
+  let name=bv.src;if(u&&(pc.top>u.top+1e-6||pc.bot<u.bot-1e-6)&&(pc.bot-pc.top)<0.5*(u.bot-u.top))name+=' · '+(pc.top-u.top<1e-6?'top ':u.bot-pc.bot<1e-6?'base ':'mid ')+f2(pc.bot-pc.top)+' m';
+  const ga=gkey(a),gb=gkey(bv),grp=isSec(ga)&&ga!==gb?ga:gb;
+  const row={pc,name,a,bv,grp,ga,gb,mid:m,before:a?{}:null,after:{}};
+  for(const f of FIELDS){row.after[f.k]=fv(f.k,pc,bv,cur.F,k,p);if(a)row.before[f.k]=fv(f.k,pc,a,pre.F,k-1,p)}
+  row.chg=k>1?FIELDS.filter(f=>!same(row.before[f.k],row.after[f.k])).map(f=>f.k):[];rows.push(row)}
+ const groups=[];for(const r of rows){let g=groups.find(x=>x.id===r.grp);if(!g){g={id:r.grp,rows:[]};groups.push(g)}g.rows.push(r)}
+ for(const g of groups){g.bRows=g.rows.filter(r=>r.before&&r.ga===g.id);g.aRows=g.rows.filter(r=>r.gb===g.id);g.chg=g.rows.some(r=>r.chg.length)}
+ return{rows,groups}}
+function visCols(){const s=STEPS[S.step],cu=S.colset.startsWith('c:')&&S.custom.find(c=>'c:'+c.id===S.colset);let ks=cu?cu.keys.slice():S.colset==='step'?[...new Set(['thick','t',...s.cols.r,...s.cols.w])]:S.colset==='all'?FIELDS.map(f=>f.k):SETS[S.colset]||['thick','t'];
+ if(S.colset==='step'&&ks.length<=2)ks=['thick','t','ash','mat','ws'];
+ const q=S.q.trim().toLowerCase();if(q)ks=FIELDS.map(f=>f.k).filter(k=>(FK[k].l+' '+k).toLowerCase().includes(q));
+ return ks.map(k=>FK[k])}
+function renderGrid(){const s=STEPS[S.step],b=pit[S.bi],G=buildGrid();
+ $('colsets').innerHTML=COLSETS.map(([k,l])=>'<button type="button" data-cs="'+k+'" aria-pressed="'+(S.colset===k&&!S.q)+'">'+l+'</button>').join('')+S.custom.map(c=>'<button type="button" data-cs="c:'+esc(c.id)+'" aria-pressed="'+(S.colset==='c:'+c.id&&!S.q)+'">'+esc(c.name)+'</button><button type="button" class="ed" data-cse="'+esc(c.id)+'" aria-label="Edit '+esc(c.name)+'">✎</button>').join('')+'<button type="button" class="add" data-cse="new">+ New set</button>';
+ renderSetEd();$('grpBy').value=S.groupBy;
+ $('modes').innerHTML=[['inline','After, was'],['arrow','Before → after']].map(([k,l])=>'<button type="button" data-mode="'+k+'" aria-pressed="'+(S.mode===k)+'">'+l+'</button>').join('');
+ $('uTitle').textContent='Units in '+b.id+' after '+s.name.toLowerCase();
+ renderFmap();
+ if(!G){$('uSub').textContent='The source step holds inputs only. Pick a later step to see units.';$('gridwrap').innerHTML='';$('drawer').innerHTML='';return}
+ const cols=visCols(),nchg=G.rows.filter(r=>r.chg.length).length;
+ $('uSub').textContent=G.rows.length+' pieces in '+G.groups.length+' groups · '+(S.step>1?nchg+' changed by this step':'all new from the seam model')+' · '+cols.length+' of '+FIELDS.length+' fields shown';
+ const cell=(f,bef,aft,ex)=>{const cls=f.d===null?'':'r';const A=aft?aft[f.k]:null,Bv=bef?bef[f.k]:null,ch=!!bef&&S.step>1&&!same(Bv,A);
+  if(!ch)return'<td class="'+cls+(ex||'')+'">'+fmtv(f,A)+'</td>';
+  if(S.mode==='arrow')return'<td class="'+cls+' chg'+(ex||'')+'"><span class="was">'+fmtv(f,Bv)+'</span> <span class="arr">→</span> '+fmtv(f,A)+'</td>';
+  return'<td class="'+cls+' chg'+(ex||'')+'">'+fmtv(f,A)+'<small>was '+fmtv(f,Bv)+'</small></td>'};
+ let t='<table class="ut"><thead><tr><th class="fix">Unit</th>'+cols.map(f=>{const w=s.cols.w.includes(f.k),rd=s.cols.r.includes(f.k);return'<th class="'+(f.d===null?'':'r ')+(w?'wr':rd?'rd':'')+'" title="'+(w?'Written by this step':rd?'Read by this step':'')+'">'+f.l+'<small>'+(f.u||'&nbsp;')+'</small></th>'}).join('')+'</tr></thead><tbody>';
+ const filt=S.onlyChg&&S.step>1;
+ for(const g of G.groups){const open=S.open[g.id]!==undefined?S.open[g.id]:S.groupBy==='none'||(S.step>1?g.chg:!['Waste','Overburden','Interburden','Floor'].includes(g.id));
+  const rows=filt?g.rows.filter(r=>r.chg.length):g.rows;if(filt&&!rows.length)continue;
+  const bA={},aA={};for(const f of cols){bA[f.k]=agg(f,g.bRows,'before');aA[f.k]=agg(f,g.aRows,'after')}
+  t+='<tr class="grp" data-g="'+esc(g.id)+'" aria-expanded="'+open+'"><td class="fix">'+(open?'▾ ':'▸ ')+esc(g.id)+'<span class="cnt">'+g.rows.length+(g.rows.length>1?' pieces':' piece')+'</span></td>'+cols.map(f=>f.agg==='txt'?'<td></td>':cell(f,S.step>1&&g.bRows.length?bA:null,aA)).join('')+'</tr>';
+  if(open)for(const r of rows){const ex=r.a&&r.a.mat!==r.bv.mat?(r.bv.mat==='waste'?' out':' in'):'';
+   t+='<tr class="row'+(S.depth!==null&&S.depth>=r.pc.top&&S.depth<r.pc.bot?' sel':'')+'" data-d="'+r.mid+'"><td class="fix">'+esc(r.name)+'</td>'+cols.map(f=>cell(f,r.before,r.after,f.k==='mat'?ex:'')).join('')+'</tr>'}}
+ t+='</tbody></table>';const gw=$('gridwrap'),st=gw.scrollTop,sl=gw.scrollLeft;gw.innerHTML=t;gw.scrollTop=st;gw.scrollLeft=sl;
+ renderDrawer(G)}
+function renderSetEd(){const e=S.edit,el=$('setEditor');if(!e){el.innerHTML='';return}
+ let h='<div class="panel setEd"><div class="row1"><label for="setName" class="was" style="font-size:13px">Set name</label><input type="text" id="setName" value="'+esc(e.name)+'" placeholder="Coal quality report"><span class="was" style="font-size:13px">Columns show in this order. Saved in this browser.</span></div><div class="cols">';let g='';
+ for(const f of FIELDS){if(f.g!==g){if(g)h+='</div>';g=f.g;h+='<div><h4>'+g+'</h4>'}h+='<label><input type="checkbox" data-fk="'+f.k+'"'+(e.keys.includes(f.k)?' checked':'')+'>'+f.l+(f.u?' <span class="was">'+f.u+'</span>':'')+'</label>'}
+ h+='</div></div><p class="err" id="setErr" style="margin:6px 0 0"></p><div class="row1" style="margin:8px 0 0"><button type="button" class="btn pri" id="setSave">Save set</button><button type="button" class="btn" id="setCancel">Cancel</button>'+(e.id?'<button type="button" class="btn del" id="setDel">Delete set</button>':'')+'</div></div>';
+ el.innerHTML=h}
+function renderDrawer(G){const d=S.depth,r=d===null?null:G.rows.find(x=>d>=x.pc.top&&d<x.pc.bot);
+ if(!r){$('drawer').innerHTML='<h3>Pick a unit</h3><p class="was" style="font-size:13px">Tap a row or a strip log interval to see every field on it, before and after this step, and which step last wrote each one.</p>';return}
+ const lastW=k=>{for(let j=S.step;j>0;j--)if(STEPS[j].cols.w.includes(k))return j;return null};
+ let h='<h3>'+esc(r.name)+'</h3><p class="was" style="font-size:13px;margin:0">'+f2(r.pc.top)+'–'+f2(r.pc.bot)+' m · in '+esc(r.grp)+'</p><dl>';let g='';
+ for(const f of FIELDS){if(f.g!==g){g=f.g;h+='<dt>'+g+'</dt>'}const a=r.after[f.k],bv=r.before?r.before[f.k]:undefined,ch=!!r.before&&S.step>1&&!same(bv,a),w=lastW(f.k);
+  h+='<dd>'+f.l+(f.u?' <span class="was">'+f.u+'</span>':'')+'</dd><dd class="v'+(ch?' to-c':'')+'">'+(ch?'<span class="was">'+fmtv(f,bv)+' → </span>':'')+fmtv(f,a)+'</dd><dd class="w">'+(w!==null?'step '+w:'')+'</dd>'}
+ h+='</dl>'+journey();$('drawer').innerHTML=h}
+function renderFmap(){if(S.fmapDone)return;S.fmapDone=1;
+ $('fmap').innerHTML='<table class="fm"><thead><tr><th>Step</th>'+FIELDS.map(f=>'<th>'+f.l+'</th>').join('')+'</tr></thead><tbody>'+STEPS.slice(1).map((s,i)=>'<tr><td>'+(i+1)+' · '+s.name+'</td>'+FIELDS.map(f=>'<td>'+(s.cols.w.includes(f.k)?'<span class="dotw" title="writes"></span>':s.cols.r.includes(f.k)?'<span class="dotr" title="reads"></span>':'')+'</td>').join('')+'</tr>').join('')+'</tbody></table><p class="leg" style="margin-top:8px"><span class="dotw"></span> writes <span class="dotr" style="margin-left:10px"></span> reads</p>'}
+function render(ran){renderCases();renderHead();renderSpine(ran);renderInsp();renderMap();renderLog();renderRiver();renderGrid()}
+let tt;function toast(m){const t=$('toast');t.textContent=m;t.classList.add('on');clearTimeout(tt);tt=setTimeout(()=>t.classList.remove('on'),2600)}
+function changed(key,from){const before=kp(R().steps[STEPS.length-1].T);const ms=ensure(S.ci,from);
+ if(!S.ci)for(let i=1;i<S.cases.length;i++)ensure(i,from);S.since=S.ci?null:before;
+ const n=STEPS.length-from;render(from);toast('Re-ran '+n+' step'+(n>1?'s':'')+' from '+STEPS[from].name+' · '+ms.toFixed(1)+' ms')}
+const firstUse=key=>STEPS.findIndex(s=>s.params.includes(key));
+
+document.addEventListener('click',e=>{const t=e.target.closest('[data-ci],[data-k],[data-bi],[data-rst],[data-cs],[data-cse],#setSave,#setCancel,#setDel,[data-mode],tr[data-g],#expAll,tr[data-d],rect[data-d]');if(!t)return;
+ if(t.dataset.cse){const id=t.dataset.cse,c=S.custom.find(x=>x.id===id);S.edit=c?{id,name:c.name,keys:c.keys.slice()}:{id:null,name:'',keys:visCols().map(f=>f.k)};renderGrid();const n=$('setName');if(n)n.focus();return}
+ if(t.id==='setCancel'){S.edit=null;renderGrid();return}
+ if(t.id==='setDel'){S.custom=S.custom.filter(x=>x.id!==S.edit.id);if(S.colset==='c:'+S.edit.id)S.colset='step';S.edit=null;saveSets();renderGrid();return}
+ if(t.id==='setSave'){const keys=FIELDS.map(f=>f.k).filter(k=>{const c=document.querySelector('[data-fk="'+k+'"]');return c&&c.checked});const name=$('setName').value.trim()||'My set';
+  if(!keys.length){$('setErr').textContent='Tick at least one field.';return}
+  let c=S.edit.id&&S.custom.find(x=>x.id===S.edit.id);if(c){c.name=name;c.keys=keys}else{c={id:'c'+Date.now().toString(36),name,keys};S.custom.push(c)}
+  S.colset='c:'+c.id;S.q='';$('colq').value='';S.edit=null;saveSets();renderGrid();return}
+ if(t.dataset.cs){S.colset=t.dataset.cs;S.q='';$('colq').value='';renderGrid();return}
+ if(t.dataset.mode){S.mode=t.dataset.mode;renderGrid();return}
+ if(t.dataset.g!==undefined){const g=t.dataset.g,cur=t.getAttribute('aria-expanded')==='true';S.open[g]=!cur;renderGrid();return}
+ if(t.id==='expAll'){const G=buildGrid();if(G){const all=G.groups.every(g=>S.open[g.id]);G.groups.forEach(g=>S.open[g.id]=!all);t.textContent=all?'Expand all':'Collapse all'}renderGrid();return}
+ if(t.dataset.ci!==undefined){S.ci=+t.dataset.ci;if(!S.cases[S.ci].run)ensure(S.ci,0);S.since=null;render()}
+ else if(t.dataset.rst){const key=t.dataset.rst;if(S.ci)delete S.cases[S.ci].ov[key];else S.base[key]=P0[key];changed(key,firstUse(key))}
+ else if(t.dataset.k!==undefined){S.step=+t.dataset.k;S.open={};render()}
+ else if(t.dataset.bi!==undefined){S.bi=+t.dataset.bi;S.depth=null;S.open={};render()}
+ else if(t.dataset.d!==undefined){S.depth=+t.dataset.d;render()}});
+document.addEventListener('input',e=>{const t=e.target;if(t.id==='colq'){S.q=t.value;renderGrid();return}if(t.id==='onlyChg'){S.onlyChg=t.checked;renderGrid();return}if(t.dataset.key){const key=t.dataset.key,v=+t.value;if(S.ci)S.cases[S.ci].ov[key]=v;else S.base[key]=v;
+  const lab=t.previousElementSibling.querySelector('b');if(lab)lab.firstChild.textContent=fmt(v,PDEF[key][4])+(PDEF[key][1]?' '+PDEF[key][1]:'');
+  clearTimeout(t._d);t._d=setTimeout(()=>{changed(key,firstUse(key));const n=$('p-'+key);if(n)n.focus()},120)}
+ else if(t.id==='expr'){clearTimeout(t._d);t._d=setTimeout(()=>{try{S.yf=compile(t.value);S.expr=t.value;S.err='';S.cases.forEach((c,i)=>{if(c.run)ensure(i,STEPS.findIndex(s=>s.id==='prod'))});render(6);toast('Formula saved · re-ran 4 steps from Product yield');const n=$('expr');n.focus();n.setSelectionRange(n.value.length,n.value.length)}catch(err){S.err=err.message;const p=document.querySelector('.err');if(p)p.textContent=S.err;else t.closest('pre').insertAdjacentHTML('afterend','<p class="err">'+esc(S.err)+'</p>')}},400)}});
+document.addEventListener('change',e=>{const t=e.target;
+ if(t.id==='grpBy'){S.groupBy=t.value;S.open={};renderGrid();return}
+ if(t.id==='addply'&&t.value){S.addRows.push(t.value);renderInsp();return}
+ if(t.dataset.tk){const k=t.dataset.tk,row=t.dataset.row,raw=t.value.trim();
+  const tgt=S.ci?(S.cases[S.ci].tov[k]=S.cases[S.ci].tov[k]||{}):S.tbase[k];
+  if(raw===''){if(S.ci)delete tgt[row];else if(row!=='_')delete tgt[row];else tgt[row]=T0[k]._}
+  else{const v=+raw;if(!isFinite(v))return;tgt[row]=v}
+  if(S.ci&&!Object.keys(tgt).length)delete S.cases[S.ci].tov[k];
+  changed(k,firstUse(k))}});
+document.addEventListener('keydown',e=>{if(/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName))return;
+ if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();S.step=Math.max(0,Math.min(STEPS.length-1,S.step+(e.key==='ArrowDown'?1:-1)));S.open={};render()}});
+
+S.cases.forEach((c,i)=>ensure(i,0));
+const first=R().steps[3].per[S.bi],rows=diffRows(R().steps[2].per[S.bi].L,first.L);if(rows.length)S.depth=(rows[0].top+rows[0].bot)/2;
+render();
+}
+</script>
+</body>
+</html>

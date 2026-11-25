@@ -1301,6 +1301,10 @@ export interface Dataflow {
   add_on?: boolean;
   /** The add-ons a main dataflow runs, in order. */
   add_ons?: string[];
+  /** A row dataflow (Reserves case plan, decision 2): run on a case's table rows after its reserves dataflow. */
+  rows?: boolean;
+  /** A field's unit by name, where its kind gives none (a row dataflow's haul distance in km). */
+  units?: Record<string, string>;
 }
 
 /** A field of words on each unit: from a block attribute, a parameter column, or worked by a step. */
@@ -1430,6 +1434,15 @@ export interface TableSetup {
   sources?: Record<string, FieldSource>;
   /** A table read in place of the blocks (Tables and scripts plan, decision 12): a row a piece, its columns mapped. */
   input?: TableInput;
+  /** The case's dataflows after its reserves dataflow (Reserves case plan, decision 2), each on the table's rows. */
+  row_dataflows?: RowDataflow[];
+}
+
+/** A row dataflow of a case: its own parameter tables (none, its own list) and the rows it runs on, a filter. */
+export interface RowDataflow {
+  dataflow: string;
+  tables?: string[];
+  range?: Record<string, string>;
 }
 
 /** A table read as block pieces: which column is the volume, the thickness or area, and each attribute the run reads. */

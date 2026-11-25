@@ -275,6 +275,8 @@ fn parameter_tables_dataflows_and_results_tables_come_back_exactly() {
                 table: zd_core::ObjectId::new(),
                 map: zd_core::InputMap { volume: "Vol_m3".into(), thickness: Some("Thk_m".into()), columns: [("seam".to_string(), "Seam_Name".to_string())].into(), ..Default::default() },
             }),
+            // The dataflows run on its rows after (Reserves case plan, decision 2), each with its tables and range.
+            row_dataflows: vec![zd_core::RowDataflow { dataflow: zd_core::ObjectId::new(), tables: Some(vec![zd_core::ObjectId::new()]), range: [("strip".to_string(), "1-6".to_string())].into() }],
         }),
         objects: false,
     };
@@ -299,6 +301,8 @@ fn parameter_tables_dataflows_and_results_tables_come_back_exactly() {
         words: vec![],
         add_on: false,
         add_ons: Vec::new(),
+        rows: false,
+        units: Default::default(),
     };
     p.apply(
         RunId::new(),

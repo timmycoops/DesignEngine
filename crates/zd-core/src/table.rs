@@ -243,6 +243,25 @@ pub struct TableSetup {
     /// picks none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input: Option<TableInput>,
+    /// The dataflows run on the table's rows after the reserves dataflow, in order (Reserves case plan, decision 2): the
+    /// case's list of dataflows is `dataflow` then these. A setup saved before has none, a list of one.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub row_dataflows: Vec<RowDataflow>,
+}
+
+/// A dataflow a case runs on its table's rows (Reserves case plan, decisions 2 to 4): a row dataflow, its own settings
+/// tables, and the rows it runs on.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RowDataflow {
+    pub dataflow: crate::ObjectId,
+    /// The parameter tables it reads, in order, in place of the dataflow's own list (decision 3); none, its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tables: Option<Vec<crate::ObjectId>>,
+    /// The rows it runs on, in the filter syntax on the table's columns (decision 4): `{"strip": "1-6"}`. None: every
+    /// row. A row outside it has the dataflow's columns empty, never 0.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub range: std::collections::BTreeMap<String, String>,
 }
 
 /// A table: columns of one length, names unique, and the columns worked out from them; a reserves table also what fills
