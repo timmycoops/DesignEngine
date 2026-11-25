@@ -13,8 +13,10 @@ plan" tab): the layer tree on the left, a row a layer saying what's on it by kin
 drawn (face designs, workflows, parameter tables, dataflows, reserves tables) found in its own tab's list with Rename and
 Delete there, an object hidden or shown from the view's right-click in Select, and found by name in the Objects table
 (`docs/decisions/0087-layers-only.md`); one tool dock on the right where every tool opens as a tab beside Properties,
-and one results dock under the view where every table opens as a tab (Run log, Tables, Parameters, Dataflow, Setup,
-Workflow canvas, Face design). Tables holds every table, picked from its Table list: Objects, then each reserves table, one grid
+and one results dock under the view where every table opens as a tab (Run log, Tables, Reserves case, Parameters,
+Dataflow, Setup, Workflow canvas, Face design). The Reserves case tab (0105) edits settings through the same unsaved edits
+(`drafts`) as the Parameters tab, which lays another tab's edits on its grid (`withTable`); a tab that edits a parameter
+table goes through `setDraft`, never a store of its own. Tables holds every table, picked from its Table list: Objects, then each reserves table, one grid
 for both (`docs/decisions/0099-tables-and-scripts.md`). A new panel names its dock in `PANELS` (`app/src/workspace/Workspace.tsx`) and opens
 through `showPanel`; it never adds a column or a row of its own, and the view keeps its room. The view has no tab strip,
 and its own tools (Select, Draw, Measure, Snap, 3D or Plan, perspective or orthographic (P), the zooms, the field of view, Section and its step and fill)

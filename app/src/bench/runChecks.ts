@@ -29,6 +29,7 @@ import {
 import { loadStaged } from '../viewport/load';
 import { takePalettePictures, takePictures } from './pictures';
 import { checkDataflow } from './dataflowCheck';
+import { checkCase } from './caseCheck';
 import { checkSectionGuide } from './sectionGuideCheck';
 import { checkClicks } from './clicksCheck';
 import { checkStringEdits } from './stringEditsCheck';
@@ -91,7 +92,7 @@ export async function runChecks(
       results.lod = await checkLod(viewport, config.lod, log, show);
     } else if (config.section_guide) {
       results.section_guide = await checkSectionGuide(viewport, log, show, section, strings, !!config.pictures);
-    } else if (config.pictures && !config.shell && !config.dataflow) {
+    } else if (config.pictures && !config.shell && !config.dataflow && !config.case) {
       const take = config.palettes ? takePalettePictures : takePictures;
       results.pictures = await take(viewport, config.surfaces, config.strings, log, show);
     } else if (config.design_lines) {
@@ -116,6 +117,8 @@ export async function runChecks(
       results.select = await checkSelect(viewport, log, show, selection);
     } else if (config.shell) {
       results.shell = await checkShell(viewport, log, dock, show, section, config.pictures ? { project: config.dataflow } : null);
+    } else if (config.case) {
+      results.case = await checkCase(config.case, log, show, dock, config.pictures ? viewport : null);
     } else if (config.dataflow) {
       results.dataflow = await checkDataflow(config.dataflow, log, show, dock, config.pictures ? viewport : null);
     } else if (config.workflow) {

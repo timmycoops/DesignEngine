@@ -28,7 +28,7 @@ use zd_script::Problem;
 use super::measure::plan_area;
 
 mod at_step;
-pub use at_step::{Balance, CaseAtStep, SaidTotal, StepTime, StepTotals, Totals};
+pub use at_step::{Balance, CaseAtStep, ColumnDid, SaidTotal, StepTime, StepTotals, Totals};
 use super::in_parallel_watched;
 use crate::{Code, Command, CommandError, CommandSpec, Field, FieldType, Inputs, Note, Outcome, Severity};
 

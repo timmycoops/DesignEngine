@@ -23,6 +23,7 @@ import {
   withAddUp,
   withFrom,
   wordFrom,
+  withTable,
 } from '../src/panels/parametersGrid.ts';
 
 // As the engine's CSV test: seam U in strips 1-5 has a 30 % cut-off; U and M a waste RD of 2.4; the default row below.
@@ -136,4 +137,20 @@ test('a word field takes its attribute or parameter column from its name; a new 
   assert.deepEqual(wordFrom({ name: 'method', from: 'parameter', column: 'Method' }, 'worked'), { name: 'method', from: 'worked' });
   assert.equal(newWordName([]), 'process');
   assert.equal(newWordName([{ name: 'Process' }, { name: 'process_2' }]), 'process_3');
+});
+
+// The Reserves case tab's settings (Reserves case plan, decision 11): an edit typed there shows in the grid as edited.
+test("a table edited in the Reserves case tab lays on the grid as saved: its cells edited, a column it adds new", () => {
+  const saved = { filters: ['material'], columns: [{ name: 'roof_loss', unit: 'm' }], rows: [{ when: { material: 'waste' }, values: {} }, { when: { material: 'coal' }, values: { roof_loss: 0.1 } }] };
+  const g = toGrid(saved);
+  const savedColumns = g.columns.map((c) => c.key);
+  const edited = { ...saved, columns: [...saved.columns, { name: 'edge_loss' }], rows: [saved.rows[0], { when: { material: 'coal' }, values: { roof_loss: 0.15, edge_loss: 0.05 } }] };
+  const laid = withTable(g, edited);
+  assert.deepEqual(laid.rows.map((r) => r.saved), [0, 1], 'the saved rows kept');
+  assert.equal(gridEdited(laid, 2, savedColumns), true);
+  assert.deepEqual(fromGrid(laid).table.rows[1].values, { roof_loss: 0.15, edge_loss: 0.05 });
+  assert.equal(laid.columns.find((c) => c.name === 'edge_loss').was, null, 'a column added is new');
+  // Put back as saved: not edited. Rows that don't line up: the table as it is.
+  assert.equal(gridEdited(withTable(g, saved), 2, savedColumns), false);
+  assert.equal(withTable(g, { ...saved, rows: [saved.rows[1]] }).rows.length, 1);
 });

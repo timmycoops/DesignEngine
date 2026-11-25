@@ -161,6 +161,14 @@ fn a_case_at_a_step_adds_up_what_the_step_did() {
     assert_eq!(t.ran.iter().map(|r| r.step).collect::<Vec<_>>(), (0..=t.step).collect::<Vec<_>>());
     assert_eq!(case.units().table.rows(), 13);
     assert!(t.kept_mb > 0.0);
+    // The block map (Reserves case plan, workstream 4): what the step did to the block, its losses moved and written
+    // (1,000 + 2,000 + 25 + 500 m³), its coal from 10,000 + 15,000 m³ to 8,290 + 13,185.
+    let did = case.columns();
+    assert_eq!(did.len(), 1);
+    assert_eq!((did[0].path.join(" "), did[0].stopped.is_none()), ("Pit 1 B1".to_string(), true));
+    assert!(close(did[0].moved, 3_525.0) && close(did[0].written, 3_525.0), "{did:?}");
+    assert!(close(did[0].coal_before, 25_000.0) && close(did[0].coal_after, 21_475.0), "{did:?}");
+    assert_eq!(case.step_name(), "rom_loss");
 }
 
 /// Roof 0.1 m to 0.15 m: only `rom_loss` runs again, from the columns kept before it; roof loss is 750 m³ a section,
@@ -181,6 +189,14 @@ fn an_edit_runs_again_from_the_first_step_that_reads_it() {
     assert!(close(said(&t, "roof loss").1, 1_500.0), "{:?}", t.said);
     assert!(close(group(&t.units, "coal"), 8_040.0 + 12_935.0), "{:?}", t.units);
     assert!(t.balance.balanced);
+
+    // The same edit as a copy of the case as saved (the Reserves case tab's first edit): rom_loss alone, the saved case
+    // left as it was.
+    let saved = open_at(&s, table, "rom_loss");
+    let copy = saved.edited(s.project(), s.log(), &edited(settings, &csv(0.15, 1.0, 0.0))).unwrap();
+    let t = copy.totals();
+    assert_eq!((t.ran_from, t.ran.iter().map(|r| r.name.as_str()).collect::<Vec<_>>()), (Some(k), vec!["rom_loss"]));
+    assert!(close(said(&t, "roof loss").1, 1_500.0) && close(said(&saved.totals(), "roof loss").1, 1_000.0));
 
     // A setting `rom_dilution`, after it, reads: nothing up to here reads it.
     case.rerun(s.project(), s.log(), &edited(settings, &csv(0.15, 1.0, 0.05))).unwrap();

@@ -65,6 +65,7 @@ fn main() {
             commands::calc_parameters,
             commands::script_check,
             commands::reserves_step_grid,
+            commands::reserves_case_step,
             commands::reserves_tree,
             commands::reserves_breakdown,
             commands::reserves_solids,

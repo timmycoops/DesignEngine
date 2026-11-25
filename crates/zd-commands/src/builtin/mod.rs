@@ -86,7 +86,7 @@ pub use measure::{MEASURES, Measure, MeasureParams, block_length, floor_dip, mea
 pub use reserves_run::{
     ColumnSteps, FormulaTraceView, ParamRead, StepKind, TraceLineView, column_trace, formula_trace, OUT_OF_MODEL, RunReserves, RunReservesParams, STEPS, StepView, StepWrite, UNDERBURDEN_THICKNESS, UnitView, Working, dataflow_starter, preston_sanders,
     reserves_preview, rerun_params, setup_of, table_column, StepUnits, units_at_step, ChangedSince, changed_since, Unsaved,
-    Balance, CaseAtStep, SaidTotal, StepTime, StepTotals, Totals,
+    Balance, CaseAtStep, ColumnDid, SaidTotal, StepTime, StepTotals, Totals,
 };
 pub use read_by::{ColumnRead, ReadBy, Reader, read_by};
 pub use setup_view::{BlocksView, FieldView, InputView, Named, SetupStep, SetupView, TableRead, setup_view};
