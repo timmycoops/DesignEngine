@@ -350,3 +350,58 @@ fn a_row_dataflow_s_table_script_writes_its_own_column_on_its_range() {
     let said = s.run("table.run_dataflow", json!({ "table": id, "dataflow": shares })).unwrap_err().to_string();
     assert!(said.contains("gave back stray, which Shares doesn't list as a field"), "{said}");
 }
+
+/// Each dataflow's state and why (decision 6), read from the log, through a case's life: Haulage never run; both up to
+/// date; Haulage's distances changed; the reserves run again after it; a block changed, so Reserves is out of date and
+/// Haulage with it; Haulage's range changed in the setup; a run undone. Exact words.
+#[test]
+fn each_dataflow_says_whether_it_s_up_to_date_and_why() {
+    let mut s = session();
+    let (id, _) = case(&mut s);
+    let (haul, distances) = haulage(&mut s, HAUL);
+    with_rows(&mut s, id, json!([{ "dataflow": haul, "range": { "strip": "1-6" } }])).unwrap();
+    let state = |s: &Session| -> Vec<(String, bool, Vec<String>)> {
+        zd_commands::builtin::case_state(s.project(), s.log(), id).unwrap().dataflows.into_iter().map(|d| (d.name, d.up_to_date, d.why)).collect()
+    };
+    let ok = |name: &str| (name.to_string(), true, Vec::<String>::new());
+    let out = |name: &str, why: &[&str]| (name.to_string(), false, why.iter().map(|w| w.to_string()).collect::<Vec<_>>());
+    assert_eq!(state(&s), [ok("Reserves"), out("Haulage", &["it hasn't run on this table"])]);
+
+    s.run("table.run_dataflow", json!({ "table": id, "dataflow": haul })).unwrap();
+    assert_eq!(state(&s), [ok("Reserves"), ok("Haulage")]);
+    let c = zd_commands::builtin::case_state(s.project(), s.log(), id).unwrap();
+    assert!(c.dataflows[1].ran.is_some() && c.dataflows[1].range.get("strip").map(String::as_str) == Some("1-6"));
+
+    // Its distances revised: Haulage alone is out of date.
+    s.run("parameters.save", json!({ "table": distances, "name": "haul distances", "csv": "when strip,distance (km)\n1-3,2.5\n4-6,3\n,5\n" })).unwrap();
+    assert_eq!(state(&s), [ok("Reserves"), out("Haulage", &["haul distances changed"])]);
+    s.run("table.run_dataflow", json!({ "table": id, "dataflow": haul })).unwrap();
+    assert_eq!(state(&s), [ok("Reserves"), ok("Haulage")]);
+
+    // The reserves dataflow run again: Haulage's numbers are from before it.
+    let p = rerun_params(s.project(), s.log(), id, &[]).unwrap();
+    s.run("reserves.run", serde_json::to_value(&p).unwrap()).unwrap();
+    assert_eq!(state(&s), [ok("Reserves"), out("Haulage", &["Reserves ran after it"])]);
+    s.run("table.run_dataflow", json!({ "table": id, "dataflow": haul })).unwrap();
+    assert_eq!(state(&s), [ok("Reserves"), ok("Haulage")]);
+
+    // A block changed: Reserves out of date, and Haulage with it.
+    let block = s.project().objects().find(|o| o.name == "1_B1_L").unwrap().id;
+    s.run("test.tag", json!({ "object": block, "attributes": { "ash": 14.0 } })).unwrap();
+    assert_eq!(state(&s), [out("Reserves", &["1 block changed"]), out("Haulage", &["Reserves is out of date"])]);
+    s.undo();
+    assert_eq!(state(&s), [ok("Reserves"), ok("Haulage")], "the change undone: up to date again");
+
+    // Its range changed in the setup.
+    with_rows(&mut s, id, json!([{ "dataflow": haul, "range": { "strip": "1-4" } }])).unwrap();
+    assert_eq!(state(&s), [ok("Reserves"), out("Haulage", &["its range changed since it ran"])]);
+    s.run("table.run_dataflow", json!({ "table": id, "dataflow": haul })).unwrap();
+    assert_eq!(state(&s), [ok("Reserves"), ok("Haulage")]);
+    // That run undone: back to the run before it, against the range as it is now.
+    s.undo();
+    assert_eq!(state(&s), [ok("Reserves"), out("Haulage", &["its range changed since it ran"])]);
+    // A block added to the layer the setup picks: Reserves hasn't run on it.
+    box_solid(&mut s, "9_B1_OB", 800.0, (20.0, 30.0), json!({ "strip": 9.0, "block": "B1", "horizon": "OB", "material": "waste", "seam": "L" }));
+    assert_eq!(state(&s)[0], out("Reserves", &["1 block added to what the setup picks"]));
+    assert_eq!(state(&s)[1].2, ["its range changed since it ran", "Reserves is out of date"]);
+}

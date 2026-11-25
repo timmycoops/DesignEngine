@@ -213,8 +213,11 @@ impl PySession {
     /// dataflow again from its setup (with `only` a block or strip) or one of its row dataflows on the table's rows;
     /// without, all of them in order, the reserves dataflow first. Running one never runs another. A list of the runs'
     /// records, one a dataflow, each the table's next revision.
-    #[pyo3(signature = (table, dataflow=None, only=None))]
-    fn run_case(&mut self, py: Python<'_>, table: &str, dataflow: Option<&str>, only: Option<Vec<String>>) -> PyResult<Py<PyAny>> {
+    ///
+    /// With `out_of_date`, only those out of date (decision 6), in order, each judged after the one before it ran, so a
+    /// row dataflow below a reserves dataflow just run is run too.
+    #[pyo3(signature = (table, dataflow=None, only=None, out_of_date=false))]
+    fn run_case(&mut self, py: Python<'_>, table: &str, dataflow: Option<&str>, only: Option<Vec<String>>, out_of_date: bool) -> PyResult<Py<PyAny>> {
         let id = object_id(table)?;
         let setup = zd_commands::builtin::setup_of(self.inner.project(), self.inner.log(), id).map_err(|e| CommandError::new_err(e.to_string()))?;
         let which: Vec<zd_core::ObjectId> = match dataflow {
@@ -223,6 +226,12 @@ impl PySession {
         };
         let mut records = Vec::with_capacity(which.len());
         for flow in which {
+            if out_of_date {
+                let state = zd_commands::builtin::case_state(self.inner.project(), self.inner.log(), id).map_err(|e| CommandError::new_err(e.to_string()))?;
+                if state.dataflows.iter().any(|d| d.dataflow == flow && d.up_to_date) {
+                    continue;
+                }
+            }
             let record = if flow == setup.dataflow {
                 let p = zd_commands::builtin::rerun_params(self.inner.project(), self.inner.log(), id, &only.clone().unwrap_or_default()).map_err(|e| CommandError::new_err(e.to_string()))?;
                 let params = serde_json::to_value(&p).map_err(|e| CommandError::new_err(e.to_string()))?;
@@ -234,6 +243,14 @@ impl PySession {
             records.push(serde_json::to_value(&record).map_err(|e| CommandError::new_err(e.to_string()))?);
         }
         to_py(py, &serde_json::Value::Array(records))
+    }
+
+    /// Each of a case's dataflows in run order, up to date or why not (Reserves case plan, decision 6): `{"table", "name",
+    /// "dataflows": [{dataflow, name, reserves, range, run, ran, up_to_date, why}]}`, read from the run log.
+    fn case_state(&self, py: Python<'_>, table: &str) -> PyResult<Py<PyAny>> {
+        let id = object_id(table)?;
+        let state = zd_commands::builtin::case_state(self.inner.project(), self.inner.log(), id).map_err(|e| CommandError::new_err(e.to_string()))?;
+        to_py(py, &serde_json::to_value(state).map_err(|e| CommandError::new_err(e.to_string()))?)
     }
 
     /// Adds waste allocation to a dataflow (the Waste allocation plan, decision 7): its four parameter tables, where the

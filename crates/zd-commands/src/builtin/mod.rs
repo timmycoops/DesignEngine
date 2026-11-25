@@ -40,6 +40,7 @@ mod starter;
 mod waste_allocation;
 mod table_setup;
 mod row_dataflows;
+mod case_state;
 mod read_by;
 mod setup_view;
 mod object_script;
@@ -89,6 +90,7 @@ pub use reserves_run::{
 pub use read_by::{ColumnRead, ReadBy, Reader, read_by};
 pub use setup_view::{BlocksView, FieldView, InputView, Named, SetupStep, SetupView, TableRead, setup_view};
 pub use table_setup::{SaveTableSetup, SaveTableSetupParams};
+pub use case_state::{CaseState, DataflowState, case_state};
 pub use row_dataflows::{RowFlow, RowsRan, RunRowDataflow, RunRowDataflowParams, check_case, row_columns_of, row_flow, row_flows, run_row_flow};
 pub use object_script::{ObjectScript, ObjectScriptParams};
 pub use table_import::{ImportTable, ImportTableParams, table_of_csv};
