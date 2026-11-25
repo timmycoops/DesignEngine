@@ -1698,6 +1698,8 @@ pub struct ColumnField {
     pub name: String,
     pub unit: &'static str,
     pub kind: FieldKind,
+    /// How it adds up over a group of units (the Reserves case tab's units table adds its groups so, decision 12).
+    pub add_up: AddUp,
 }
 
 /// What a column is run on that isn't saved (decision 0082, points 4 and 5): the dataflow as edited, and parameter tables
@@ -1744,7 +1746,7 @@ pub fn table_column(project: &zd_core::Project, log: &[crate::LogEntry], table: 
     let blocks = &opened.prepared.columns[&opened.key];
     let mut steps = Vec::new();
     run_column(&opened.prepared, &opened.key, blocks, Some(&mut steps)).map_err(|s| CommandError::Invalid(s.why))?;
-    let fields = opened.prepared.fields.list().iter().map(|f| ColumnField { name: f.name.clone(), unit: unit_of_kind(f.kind), kind: f.kind }).collect();
+    let fields = opened.prepared.fields.list().iter().map(|f| ColumnField { name: f.name.clone(), unit: unit_of_kind(f.kind), kind: f.kind, add_up: f.add_up.clone() }).collect();
     Ok(ColumnSteps {
         column: opened.key.path.clone(),
         case: opened.key.case.clone(),

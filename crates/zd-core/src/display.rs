@@ -83,7 +83,21 @@ pub struct Display {
     /// out, and with `coal_only` its waste, aren't drawn, snapped to or cut by a section.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reserves: Option<ReservesFilter>,
+    /// The field sets a planner named for the Reserves case tab's units table (Reserves case plan, decision 12), in the
+    /// order made: what's shown, saved with the project, not undone.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub field_sets: Vec<FieldSet>,
 }
+
+/// A field set of the units table (Reserves case plan, decision 12): its name and the fields it shows, in order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FieldSet {
+    pub name: String,
+    pub fields: Vec<String>,
+}
+
+/// The units table's own field sets, whose names a planner's can't take.
+pub const BUILT_IN_FIELD_SETS: [&str; 5] = ["This step", "Quantities", "Qualities", "Class and audit", "All"];
 
 /// A reserves table's filter in the view (decision 0090).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

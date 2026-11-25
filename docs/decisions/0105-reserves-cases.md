@@ -217,6 +217,36 @@ a company library of field sets, pieces as solids, the scheduler's tables, runni
   249,253 m³ (+50.0 %) within 0.7 s of the last key (a debug build, the 330 ms wait included); discarded, as saved; at
   `final` ROM coal 9,234,489 t.
 
+## Built: workstream 5, the units table
+
+- **The units table** (`app/src/panels/UnitsTable.tsx`, its working parts in `caseUnits.ts`), under the step view in
+  the Reserves case tab: the picked block's units before and after the step, a row a piece of ground (decision 12).
+  - **Pieces.** A unit that kept its id is one row, before and after. A piece the step split off is a row under the unit
+    it came from, named so. So is a unit joined from benches. A unit taken away or joined into another is a row with no
+    after. A piece finds its unit by its ground, the same horizon and bench (a joined unit's pieces keep its joins), or a
+    joined unit by one of its benches.
+  - **Groups.** By working section (where a unit goes in ROM once a step sends it there; the default), seam, horizon,
+    material, bench, any word field, or none. Each group's units before and after add up by each field's own rule, as the
+    engine adds them (`addUp`, the field's `add_up` now sent with it), so the groups' subtotals together are the
+    block's. A piece that leaves a group is listed there too, in red, with where it went.
+  - **Field sets.** This step (what it reads and what it changed on the block, with thickness and volume; the default),
+    Quantities, Qualities, Class and audit, All, and a planner's own. Find a field picks from every field. Changed only.
+    A change shown as "before → after" or "after, was".
+  - **The picked piece.** Every field before and after, the last step to write it, and its journey through the steps:
+    where it was made, each volume, class or destination change, where it went.
+  - **The field map.** Every step by the fields shown, which reads (R) and which writes (W) each on this block.
+- **Field sets saved in the project** (decision 12): `Display.field_sets` (`zd-core`), display state like a look or a
+  filter, saved with the next Save and never a revision or undone; `Project::set_field_sets` names each once, none a
+  built-in set's, its fields trimmed and each once; `field_sets` and `set_field_sets` in the app shell.
+- **Tested.** App (`tests/caseUnits.test.mjs`): B5-like U, 6,507 m³, kept its id less its losses and four pieces split
+  off it, adding back to 6,507 m³; a join's benches into the joined unit; a joined unit's pieces its own; the groups'
+  subtotals the block's before and after, the loss pieces red in the section they left, ash by mass none where waste
+  weighs with none; the field sets; a piece's journey, the last step to write a field, and the field map. `zd-core`: field
+  sets named once and kept as display state; `zd-io`: they survive a save and open. In the app (`--bench --case`, on the
+  demo): B5 at `rom_loss`, its U's five pieces adding to the 1,292.5 m³ it was (exact), the groups' volumes adding to the
+  block's before and after (1e-9), 12 pieces red where they left, a field set saved and deleted, a loss piece's journey
+  "made here" at `rom_loss`, the field map's writes.
+
 ## Known limits
 
 - **Not the command decision 14 named.** A row dataflow runs by `table.run_dataflow`, not `reserves.run`: a reserves
@@ -232,9 +262,11 @@ a company library of field sets, pieces as solids, the scheduler's tables, runni
 - **Out of date reads the log.** A project saved and opened carries its log, so the state comes back with it; a table
   whose runs aren't in the log (made before logs were kept) says its dataflows haven't run. A block revised and then put
   back as it was by hand, not by undo, still counts as changed.
-- **The tab shows one dataflow, the reserves one** (workstream 4): its row dataflows, Open another dataflow, the flow
-  and the units table come in workstreams 5 and 6; New case and Copy case, and the Setup and Dataflow tabs taken out, in
-  workstream 7. The Tables tab still says what changed since the reserves run, as before.
+- **The tab shows one dataflow, the reserves one** (workstream 4): its row dataflows, Open another dataflow and the
+  flow come in workstream 6; New case and Copy case, and the Setup and Dataflow tabs taken out, in workstream 7.
+- **The units table is the picked block's** (workstream 5), drawn as a table of its own in the Tables grid's look, not
+  the grid itself: the grid holds one value a cell, and a row here holds before and after. A piece's journey follows its
+  id; a piece split off starts where it was made. Field sets save with the project's next Save, as looks do. The Tables tab still says what changed since the reserves run, as before.
 - **Settings typed are only the settings tables'.** A step's own settings in the dataflow (a built-in step reading
   `roof_loss` from another column) and its script are edited in the Parameters tab, and run here as edited; Save and run
   the case saves the tables, not the dataflow. The run's own rows (a setup's `parameters`) show, not typed in.

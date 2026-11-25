@@ -258,6 +258,41 @@ impl Project {
         true
     }
 
+    /// The units table's field sets as a planner named them (Reserves case plan, decision 12), in place of those there:
+    /// each name given once (case aside) and none a built-in set's, its fields named, each once, trimmed. Display state:
+    /// saved with the project, not undone. True where they changed.
+    pub fn set_field_sets(&mut self, sets: Vec<display::FieldSet>) -> Result<bool, String> {
+        let mut out: Vec<display::FieldSet> = Vec::with_capacity(sets.len());
+        for set in sets {
+            let name = set.name.trim().to_string();
+            if name.is_empty() {
+                return Err("a field set has no name".into());
+            }
+            if display::BUILT_IN_FIELD_SETS.iter().any(|b| b.eq_ignore_ascii_case(&name)) {
+                return Err(format!("{name} is one of the table's own field sets: name yours another way"));
+            }
+            if out.iter().any(|s| s.name.eq_ignore_ascii_case(&name)) {
+                return Err(format!("two field sets are named {name}"));
+            }
+            let mut fields: Vec<String> = Vec::new();
+            for f in set.fields.iter().map(|f| f.trim()).filter(|f| !f.is_empty()) {
+                if !fields.iter().any(|g| g == f) {
+                    fields.push(f.to_string());
+                }
+            }
+            if fields.is_empty() {
+                return Err(format!("{name} shows no fields"));
+            }
+            out.push(display::FieldSet { name, fields });
+        }
+        if self.display.field_sets == out {
+            return Ok(false);
+        }
+        self.display.field_sets = out;
+        self.generation = next_generation();
+        Ok(true)
+    }
+
     /// A layer's own filter, if it has one.
     pub fn layer_filter(&self, id: LayerId) -> Option<&BTreeMap<String, String>> {
         self.display.filters.get(&id)
@@ -1022,5 +1057,24 @@ mod tests {
         p.apply(RunId::new(), vec![Change::Delete { id: tid, base: 2 }]).unwrap();
         assert_eq!(out(&p), [false; 7], "the table gone, nothing is left out");
         assert!(p.set_reserves_filter(None) && p.filtered_out().is_empty());
+    }
+
+    /// The units table's field sets (Reserves case plan, decision 12): named once each, none a built-in set's, their
+    /// fields trimmed and each once; saved as display state and read back.
+    #[test]
+    fn field_sets_are_named_once_and_kept_as_display_state() {
+        use crate::display::FieldSet;
+        let set = |name: &str, fields: &[&str]| FieldSet { name: name.into(), fields: fields.iter().map(|f| f.to_string()).collect() };
+        let mut p = Project::new();
+        assert_eq!(p.set_field_sets(vec![set(" Haul ", &["volume", " tonnes", "volume", ""])]), Ok(true));
+        assert_eq!(p.display().field_sets, vec![set("Haul", &["volume", "tonnes"])]);
+        assert_eq!(p.set_field_sets(vec![set("Haul", &["volume", "tonnes"])]), Ok(false), "the same sets");
+        assert!(p.set_field_sets(vec![set("All", &["volume"])]).unwrap_err().contains("table's own"));
+        assert!(p.set_field_sets(vec![set("a", &["volume"]), set("A", &["ash"])]).unwrap_err().contains("two field sets"));
+        assert!(p.set_field_sets(vec![set("b", &[" "])]).unwrap_err().contains("shows no fields"));
+        assert_eq!(p.display().field_sets.len(), 1, "a refused change leaves them");
+        let back: crate::Display = serde_json::from_str(&serde_json::to_string(p.display()).unwrap()).unwrap();
+        assert_eq!(back.field_sets, p.display().field_sets);
+        assert!(!serde_json::to_string(&crate::Display::default()).unwrap().contains("field_sets"), "none, none written");
     }
 }

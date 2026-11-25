@@ -797,6 +797,17 @@ export interface Breakdown {
 
 export const reservesTree = (object: string, when: Record<string, string> = {}) => invoke<ReservesNode>('reserves_tree', { object, when });
 /** A reserves table's leaves as attributes, a leaf a row: what the filter box counts to tick (decision 0088). */
+/** A field set of the Reserves case tab's units table a planner named (Reserves case plan, decision 12). */
+export interface FieldSet {
+  name: string;
+  fields: string[];
+}
+
+/** The units table's field sets a planner named, saved with the project. */
+export const fieldSets = () => invoke<FieldSet[]>('field_sets');
+/** The units table's field sets in place of those there: display state, saved with the project, not undone. */
+export const setFieldSets = (sets: FieldSet[]) => invoke<FieldSet[]>('set_field_sets', { sets });
+
 export const reservesFilterRows = (object: string) => invoke<Record<string, boolean | number | string>[]>('reserves_filter_rows', { object });
 /**
  * A reserves table's node with its fields down the side and across its children, each in `open` opened; or, with
@@ -888,6 +899,8 @@ export interface ColumnField {
   name: string;
   unit: string;
   kind: string;
+  /** How it adds up over a group of units (decision 12's subtotals); left out by an older build. */
+  add_up?: { by: 'sum' | 'volume' | 'max' | 'min' } | { by: 'mass'; density: string } | { by: 'ratio'; of: string; per: string };
 }
 
 /** A reserves table's block column run again step by step, with what has changed since the table was made. */
