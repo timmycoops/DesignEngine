@@ -28,7 +28,7 @@ use zd_script::Problem;
 use super::measure::plan_area;
 
 mod at_step;
-pub use at_step::{Balance, CaseAtStep, ColumnDid, SaidTotal, StepTime, StepTotals, Totals};
+pub use at_step::{Balance, CaseAtStep, ColumnDid, FlowGroup, FlowStep, SaidTotal, StepTime, StepTotals, Totals};
 use super::in_parallel_watched;
 use crate::{Code, Command, CommandError, CommandSpec, Field, FieldType, Inputs, Note, Outcome, Severity};
 
@@ -1717,7 +1717,7 @@ impl Unsaved {
     }
 
     /// The project's objects, an edited parameter table in place of its saved one; each edited table checked first.
-    fn reader<'a>(&'a self, project: &'a zd_core::Project) -> Result<impl Fn(ObjectId) -> Result<Arc<Object>, CommandError> + 'a, CommandError> {
+    pub(crate) fn reader<'a>(&'a self, project: &'a zd_core::Project) -> Result<impl Fn(ObjectId) -> Result<Arc<Object>, CommandError> + 'a, CommandError> {
         for (id, table) in &self.tables {
             let name = project.object(*id).map_or_else(|| "a parameter table".to_string(), |o| o.name.clone());
             table.check().map_err(|e| CommandError::Invalid(format!("{name} as edited: {e}")))?;

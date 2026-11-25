@@ -247,12 +247,62 @@ a company library of field sets, pieces as solids, the scheduler's tables, runni
   block's before and after (1e-9), 12 pieces red where they left, a field set saved and deleted, a loss piece's journey
   "made here" at `rom_loss`, the field map's writes.
 
+## Built: workstream 6, the flow and Open another dataflow
+
+- **The flow** (decision 10, `app/src/panels/CaseFlow.tsx`, its sums in `flowStages.ts`), across the tab under the
+  inputs: the case carried through the dataflow, a stage a column, the blocks first. The coal lane in tonnes (m³ until
+  the units weigh) and the waste lane in BCM, each as wide as it is against the most it holds; under the coal what the
+  stage took, red, by what became of it (thin, loss, high ash); under the waste the rock it let into ROM, amber. What a
+  stage takes is counted by what left the coal lane, so the densities step putting coal on its in situ basis moves the
+  lane's tonnes but takes nothing. A stage's name or a step's tick goes there; the stage open is lit; a figure an edit
+  moved is blue, with what it was. It runs again with the case as you type.
+- **The case through every step** (`CaseAtStep::flow`, engine): the units by material and what became of them after
+  each step, kept as each step runs up to the one open, and after it run on from that step's columns, not kept, until
+  something runs again. `reserves_case_step` sends it as saved and as edited. Python: `step_flow(table)`.
+- **Open another dataflow** (decisions 4 and 6, `CaseSwitcher.tsx`), from the band: the case's dataflows in run order,
+  each with its range in words (`strip 1-3`, every row, the case's blocks), what it reads (the blocks and seam order, or
+  the columns above it, and its settings tables by name, now in `case_state`), up to date or why not, Open and Run; then
+  Run what's out of date (each judged just before it would run, so a row dataflow below a reserves run just made runs
+  too) and Run all, in order, each run its own undo, as Python's `run_case`. The band says the open dataflow's state.
+- **A row dataflow opened** (`RowDataflowView.tsx`): its inputs (the rows in range of all, the columns above it the step
+  reads, its settings tables lit where read); its steps, Formula or Table script; the step's script, what it reads off
+  its source and the fields it set; its columns added up over its range by their rules, before the step, after it and
+  as its last run left them; its settings by row, typed in as edits and run as you type, Save and run saving the tables
+  and running it alone; and the rows in range before and after the step, a changed value lit, the first 400 shown.
+  Engine: `row_dataflow_at_step` runs it to the step and the step before it on what's saved or as edited, nothing kept;
+  `row_dataflow_step` in the app shell; `row_step(table, dataflow, step, tables=None)` in Python.
+- **Fixed: a row formula reading a column in brackets beside a field by name.** A row formula was handed only the
+  columns it read by name (`row.distance`) once it read any, so `row["ROM\\Coal\\tonnes"]` beside it came in empty and
+  the formula stopped on every row. The columns named in brackets, as written or with their backslashes doubled, are
+  now read too.
+- **Tested.** Engine (`case_at_step.rs`): the made-up block's flow through every step, the blocks bringing 25,000 m³ of
+  coal and 95,000 m³ of waste, `rom_loss` taking 1,000 m³ roof, 2,000 floor, 25 edge and 500 other, 21,475 m³ left,
+  every step adding back to 120,000 m³; asked again, nothing runs; roof 0.15 m, `rom_loss` on 1,500 m³ and 20,975 left,
+  the steps before it as they were; opened at the blocks or the end, the same flow (1e-9). `case_dataflows.rs`: Haulage
+  in two steps on strips 1 to 6, its columns empty before the first, the distances (3 km the largest) and no
+  tonne-kilometres after it, 337,500 t.km after the second, nothing written until it runs and then the last run the
+  same; strips 1 to 3 at 4 km unsaved, 472,500 t.km; each dataflow's settings tables in the case state. App
+  (`tests/flowStages.test.mjs`): the lanes, what each stage took and let in, a density change taking nothing, ranges in
+  words. Python: Haulage's step as saved and as edited (67,500 and 90,000 t.km, nothing saved), the flow adding back at
+  every step. In the app (`--bench --case`, the demo): the flow's stages (Blocks, In situ, Working sections, ROM,
+  Final), ROM taking coal and letting rock in, each stage's coal what came in less what it took (m³, 1e-9), the blocks
+  and in situ taking none; a step's tick goes there; a row dataflow added (Check haulage on strips 1 to 3) listed out
+  of date, "it hasn't run on this table", with its range and settings; Run what's out of date ran it alone, then both
+  up to date; opened at `tkm`, its tonne-kilometres after the step what its last run wrote (10,994,607 t.km); strips 1
+  and 2 typed from 2 to 4 km, 17,533,430 t.km as you type; discarded, as saved.
+- **Timed** (the demo, 90 block columns, release build): the flow first asked at `rom_loss` 42 ms (the steps after it
+  run on), asked again 0.2 ms; an edit and the flow 54 to 56 ms over five edits, inside the 330 ms the tab waits after a
+  key. A row dataflow at a step (698 of 1,436 rows, two formula steps) 290 to 300 ms an edit: one run to its end, its
+  columns kept at the two steps shown (three runs took 420 ms), about what `table.run_dataflow` takes for the same rows
+  (255 ms). A row's words for its filters are now read only from the columns a filter can name (the range's, a step's
+  and its settings tables'), not all 455.
+
 ## Known limits
 
 - **Not the command decision 14 named.** A row dataflow runs by `table.run_dataflow`, not `reserves.run`: a reserves
   table's column view, Run again and changed-since read the last `reserves.run` that wrote the table, and a row run kept
   apart never stands in for it. "All in order" is `run_case` in Python, a run a dataflow, each its own undo, as decision
-  6 says; the app's Run all (workstream 6) will do the same.
+  6 says; the app's Run all (workstream 6) does the same.
 - **Reads from below are found in the source.** A script that builds a column's name (`"Haulage\\" + x`) isn't caught
   when saved; the run then reads the column as it stands, from that dataflow's last run.
 - **A row dataflow's columns are named by its own name.** Renaming the dataflow writes new columns next run; the old
@@ -262,8 +312,17 @@ a company library of field sets, pieces as solids, the scheduler's tables, runni
 - **Out of date reads the log.** A project saved and opened carries its log, so the state comes back with it; a table
   whose runs aren't in the log (made before logs were kept) says its dataflows haven't run. A block revised and then put
   back as it was by hand, not by undo, still counts as changed.
-- **The tab shows one dataflow, the reserves one** (workstream 4): its row dataflows, Open another dataflow and the
-  flow come in workstream 6; New case and Copy case, and the Setup and Dataflow tabs taken out, in workstream 7.
+- **No way in yet** (workstream 7): New case, Copy case and Add a dataflow, the cases along the foot with their headline
+  figures, and the Setup and Dataflow tabs taken out. A row dataflow is added to a case in the Setup tab or Python.
+- **The flow is the case's units.** It shows coal and waste in play and what became of them, not what's written to the
+  table: ROM coal is the coal lane at `final` with the rock let in, in situ tonnes, not the ROM density's. The flow
+  after the open step runs again with each edit any step reads, the whole of it; on a much larger mine that is the
+  steps after the one open run again as you type.
+- **A row dataflow opened** shows its rows in range, the first 400; its step's reads are a formula's off its source
+  (a table script's reads aren't listed), and its settings by row don't ring the cell a row used. Its own dataflow as
+  edited in the Parameters tab runs here too; Save and run saves the tables, not the dataflow. A row dataflow runs in
+  about a third of a second on the demo's 700 rows, the formula's own run most of it; not yet tuned, nor measured on
+  PIT B.
 - **The units table is the picked block's** (workstream 5), drawn as a table of its own in the Tables grid's look, not
   the grid itself: the grid holds one value a cell, and a row here holds before and after. A piece's journey follows its
   id; a piece split off starts where it was made. Field sets save with the project's next Save, as looks do. The Tables tab still says what changed since the reserves run, as before.

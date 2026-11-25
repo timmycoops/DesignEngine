@@ -266,14 +266,7 @@ impl PySession {
     fn step_case(&mut self, py: Python<'_>, table: &str, step: &Bound<'_, PyAny>, tables: Option<std::collections::BTreeMap<String, String>>) -> PyResult<Py<PyAny>> {
         let id = object_id(table)?;
         let project = self.inner.project();
-        let mut edited = Vec::new();
-        for (key, csv) in tables.unwrap_or_default() {
-            let found = object_id(&key).ok().and_then(|i| project.object(i)).or_else(|| project.objects().find(|o| o.name == key && matches!(o.body, Body::ParameterTable(_))));
-            let object = found.ok_or_else(|| PyValueError::new_err(format!("no parameter table {key}")))?;
-            let parsed = zd_core::ParameterTable::from_csv(&csv).map_err(|e| PyValueError::new_err(format!("{key}: {e}")))?;
-            edited.push((object.id, std::sync::Arc::new(parsed)));
-        }
-        let unsaved = zd_commands::builtin::Unsaved { dataflow: None, tables: edited };
+        let unsaved = zd_commands::builtin::Unsaved { dataflow: None, tables: self.edited_tables(tables)? };
         let refused = |e: zd_commands::CommandError| CommandError::new_err(e.to_string());
         let mut case = match self.steps.remove(&id) {
             Some(mut case) => {
@@ -306,6 +299,33 @@ impl PySession {
         let case = self.kept_case(table)?;
         let made = case.table(self.inner.project()).map_err(|e| CommandError::new_err(e.to_string()))?;
         to_py(py, &table_json(&made))
+    }
+
+    /// The flow of a table's case kept by `step_case` (Reserves case plan, decision 10): the case after every step of its
+    /// dataflow, 0 for its blocks as read, its units by material and what became of them, `[{step, name, groups:
+    /// [{material, became, detail, units, volume, tonnes}], stopped}]`. The steps after the one kept run on and aren't kept.
+    fn step_flow(&mut self, py: Python<'_>, table: &str) -> PyResult<Py<PyAny>> {
+        let id = object_id(table)?;
+        let case = self.steps.get_mut(&id).ok_or_else(|| PyValueError::new_err(format!("no case kept for {table}: open it at a step with step_case first")))?;
+        to_py(py, &serde_json::to_value(case.flow()).map_err(|e| CommandError::new_err(e.to_string()))?)
+    }
+
+    /// One of a case's row dataflows at step `step` (Reserves case plan, workstream 6; 0 before its first step), on what's
+    /// saved or with `tables` as edited (`{parameter table name or id: CSV text}`, never saved): `{name, step, steps, range,
+    /// rows_in_range, outside, columns: [{field, column, unit, before, after, last_run}], rows: [{row, label, before,
+    /// after}], tables, stopped, said, ms}`. `dataflow` is its id or name. Nothing is kept or saved.
+    #[pyo3(signature = (table, dataflow, step, tables=None))]
+    fn row_step(&self, py: Python<'_>, table: &str, dataflow: &str, step: usize, tables: Option<std::collections::BTreeMap<String, String>>) -> PyResult<Py<PyAny>> {
+        let id = object_id(table)?;
+        let project = self.inner.project();
+        let flow = object_id(dataflow)
+            .ok()
+            .filter(|i| project.object(*i).is_some())
+            .or_else(|| project.objects().find(|o| o.name == dataflow && matches!(o.body, Body::Dataflow(_))).map(|o| o.id))
+            .ok_or_else(|| PyValueError::new_err(format!("no dataflow {dataflow}")))?;
+        let unsaved = zd_commands::builtin::Unsaved { dataflow: None, tables: self.edited_tables(tables)? };
+        let view = zd_commands::builtin::row_dataflow_at_step(project, id, flow, step, &unsaved).map_err(|e| CommandError::new_err(e.to_string()))?;
+        to_py(py, &serde_json::to_value(view).map_err(|e| CommandError::new_err(e.to_string()))?)
     }
 
     /// Adds waste allocation to a dataflow (the Waste allocation plan, decision 7): its four parameter tables, where the
@@ -470,6 +490,19 @@ fn apply_licence(status: &zd_licence::Status) {
 }
 
 impl PySession {
+    /// Parameter tables as edited, `{name or id: CSV text}`, each read and checked, by id.
+    fn edited_tables(&self, tables: Option<std::collections::BTreeMap<String, String>>) -> PyResult<Vec<(zd_core::ObjectId, std::sync::Arc<zd_core::ParameterTable>)>> {
+        let project = self.inner.project();
+        let mut edited = Vec::new();
+        for (key, csv) in tables.unwrap_or_default() {
+            let found = object_id(&key).ok().and_then(|i| project.object(i)).or_else(|| project.objects().find(|o| o.name == key && matches!(o.body, Body::ParameterTable(_))));
+            let object = found.ok_or_else(|| PyValueError::new_err(format!("no parameter table {key}")))?;
+            let parsed = zd_core::ParameterTable::from_csv(&csv).map_err(|e| PyValueError::new_err(format!("{key}: {e}")))?;
+            edited.push((object.id, std::sync::Arc::new(parsed)));
+        }
+        Ok(edited)
+    }
+
     /// The case `step_case` keeps for a table, or why there's none.
     fn kept_case(&self, table: &str) -> PyResult<&zd_commands::builtin::CaseAtStep> {
         let id = object_id(table)?;

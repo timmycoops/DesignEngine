@@ -1012,7 +1012,103 @@ export interface CaseStepView {
   saved: StepTotals;
   now: StepTotals | null;
   blocks: ColumnDid[];
+  /** The case through every step as saved, and as edited where there are edits (the flow). */
+  saved_flow: FlowStep[];
+  now_flow: FlowStep[] | null;
 }
+
+/** Units of one material and what became of them over the whole case after a step: `coal` lost to `loss` (`roof`). */
+export interface FlowGroup {
+  material: string;
+  became: string | null;
+  detail: string;
+  units: number;
+  volume: number;
+  tonnes: number | null;
+}
+
+/** The case after a step (0 its blocks as read), its units by material and what became of them. */
+export interface FlowStep {
+  step: number;
+  name: string;
+  groups: FlowGroup[];
+  stopped: number;
+}
+
+/** One of a case's dataflows as it stands (decision 6): its range, its last run and whether it's up to date, and why not. */
+export interface DataflowState {
+  dataflow: string;
+  name: string;
+  reserves: boolean;
+  range?: Record<string, string>;
+  run: string | null;
+  ran: string | null;
+  up_to_date: boolean;
+  why: string[];
+  /** The settings tables it reads, by name, in the order read. */
+  tables: string[];
+}
+
+/** A case, a reserves table, and its dataflows in run order, the reserves dataflow first. */
+export interface CaseState {
+  table: string;
+  name: string;
+  dataflows: DataflowState[];
+}
+
+export const caseState = (table: string) => invoke<CaseState>('case_state', { table });
+
+/** One step of a row dataflow: a formula on each row or a table script, what it reads and the fields it sets. */
+export interface RowStepInfo {
+  name: string;
+  kind: 'formula' | 'table';
+  script: string;
+  when?: Record<string, string>;
+  reads: string[];
+  sets: string[];
+}
+
+/** A row dataflow's column at a step, added up over its range before and after the step and as the last run left it. */
+export interface RowColumnAt {
+  field: string;
+  column: string;
+  unit: string;
+  add_up: ColumnField['add_up'] | null;
+  words: boolean;
+  before: number | null;
+  after: number | null;
+  last_run: number | null;
+}
+
+/** A row in a row dataflow's range, its columns before and after the step in the order of `columns`. */
+export interface RowAt {
+  row: number;
+  label: string;
+  before: (number | string | null)[];
+  after: (number | string | null)[];
+}
+
+/** A case's row dataflow at a step (0 before its first): its steps, range, rows before and after, settings tables. */
+export interface RowDataflowAtStep {
+  table: string;
+  dataflow: string;
+  name: string;
+  step: number;
+  steps: RowStepInfo[];
+  range?: Record<string, string>;
+  rows_in_range: number;
+  outside: number;
+  columns: RowColumnAt[];
+  rows: RowAt[];
+  tables: [string, string][];
+  stopped: string[];
+  said: string[];
+  ms: number;
+}
+
+/** A row dataflow of a case at a step, on what's saved or as edited (`edited`, the dataflow itself; `tables`). */
+export const rowDataflowStep = (table: string, dataflow: string, step: number, edited: Dataflow | null = null, tables: [string, ParameterTable][] = []) =>
+  invoke<RowDataflowAtStep>('row_dataflow_step', { table, dataflow, step, edited, tables: tables.length ? tables : null });
 
 /**
  * A reserves table's case at step `step` (0 its blocks as read), kept between asks as saved and as edited (`dataflow`,

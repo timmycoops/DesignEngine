@@ -3,7 +3,7 @@
 // coal roof loss typed from 0.1 to 0.15 m in the step's settings by seam and ply, and the whole case read back as it runs
 // again; then the edit discarded. With `--pictures <folder>`, the window at each stage.
 import type { DockviewApi } from 'dockview-react';
-import { openProject, type ProjectSummary, writePicture } from '../bridge';
+import { openProject, type ProjectSummary, runCommand, tableSetupView, writePicture } from '../bridge';
 import type { Viewport } from '../viewport/Viewport';
 import { showPanel } from '../workspace/Workspace';
 import { windowPicture } from './windowPicture';
@@ -182,5 +182,107 @@ export async function checkCase(path: string, log: (line: string) => void, show:
   const map = await until(() => document.querySelector('[data-slot="field-map"]')?.textContent, 10_000);
   expect('the field map shows what each step writes', !!map && map.includes('W'), map?.slice(0, 80));
   await unitsPicture('case-units-picked');
+
+  // The flow (decision 10, workstream 6): the case through every stage, each stage's coal what the one before left less
+  // what it took, ROM taking coal and letting rock in; a step's tick goes there.
+  const stagesShown = () =>
+    [...document.querySelectorAll<HTMLElement>('[data-slot="flow-stage"]')].map((e) => ({ name: e.dataset.stage ?? '', coal: Number(e.dataset.coal), lost: Number(e.dataset.lost), letIn: Number(e.dataset.letIn), coalM3: Number(e.dataset.coalM3), lostM3: Number(e.dataset.lostM3) }));
+  const flow = await until(() => (stagesShown().length > 3 ? stagesShown() : null), 10_000);
+  expect('the flow shows the blocks and every stage', !!flow && flow[0].name === 'Blocks' && flow.some((s) => s.name === 'ROM'), flow?.map((s) => s.name));
+  if (flow) {
+    const rom = flow.find((s) => s.name === 'ROM')!;
+    expect('ROM takes coal and lets rock in', rom.lost > 0 && rom.letIn > 0, rom);
+    // Coal carried on: each stage's coal is the one before less what it took (m³, 1e-9).
+    const carried = flow.slice(1).every((s, i) => Math.abs(flow[i].coalM3 - s.lostM3 - s.coalM3) <= 1e-9 * flow[0].coalM3);
+    expect('the blocks and in situ take no coal', flow[1].lost === 0, flow.slice(0, 2));
+    expect("each stage's coal is what came in less what it took", carried, flow);
+  }
+  const tick = document.querySelector<HTMLElement>('[data-slot="flow-step"][data-step]:not([data-step="0"])');
+  const tickStep = tick?.dataset.step;
+  tick?.click();
+  const moved = await until(() => document.querySelector('[data-tool-panel="case"] [data-slot="case-step"].bg-selection') && document.querySelector('[data-slot="case-step-pane"] .text-sm')?.textContent?.startsWith(`${tickStep} ·`), 10_000);
+  expect("a step's tick in the flow goes to it", !!moved, tickStep);
+  document.querySelector<HTMLElement>('[data-tool-panel="case"] [data-slot="case-step"][data-step="rom_loss"]')?.click();
+  await wait(800);
+  await picture?.('case-flow');
+
+  // Open another dataflow (decisions 4 and 6): a row dataflow added to the case, Haulage on strips 1 to 3, out of date
+  // until it runs; Run what's out of date runs it alone; opened, its rows before and after its steps, a distance typed.
+  const made = (r: Awaited<ReturnType<typeof runCommand>>) => r.record.outputs.find((o) => o.change === 'created')?.id ?? '';
+  try {
+    const distances = made(await runCommand('parameters.save', { name: 'Check haul distances', csv: 'when strip,distance (km)\n1-2,2\n,3\n' }));
+    const content = {
+      rows: true,
+      fields: [
+        { name: 'distance', kind: 'other', add_up: { by: 'max' }, from: 'worked' },
+        { name: 'tkm', kind: 'other', add_up: { by: 'sum' }, from: 'worked' },
+      ],
+      units: { distance: 'km', tkm: 't.km' },
+      steps: [
+        { step: 'distance', formula: { script: 'def formula(row, p):\n    row.distance = p.distance\n' } },
+        { step: 'tkm', formula: { script: 'def formula(row, p):\n    t = row["ROM\\\\Coal\\\\tonnes"]\n    row.tkm = None if t == None else t * row.distance\n' } },
+      ],
+      parameters: [distances],
+    };
+    const haul = made(await runCommand('dataflow.save', { name: 'Check haulage', content }));
+    const setup = (await tableSetupView(base.id)).setup;
+    const reply = await runCommand('table.setup', { table: base.id, setup: { ...setup, row_dataflows: [{ dataflow: haul, range: { strip: '1-3' } }] } });
+    await show(reply.summary);
+  } catch (e) {
+    expect('a row dataflow added to the case', false, String(e));
+    return { ...results, failures };
+  }
+  const listRow = (name: string) => document.querySelector<HTMLElement>(`[data-slot="case-dataflow-row"][data-dataflow="${CSS.escape(name)}"]`);
+  const switcher = await until(() => document.querySelector<HTMLElement>('[data-slot="case-switch"]'));
+  const opened2 = async () => {
+    if (!document.querySelector('[data-slot="case-dataflows"]')) switcher?.click();
+    return until(() => listRow('Check haulage'), 10_000);
+  };
+  const row = await opened2();
+  expect('Open another dataflow lists the case in run order', !!row && [...document.querySelectorAll<HTMLElement>('[data-slot="case-dataflow-row"]')].map((e) => e.dataset.dataflow).join(',') === 'Reserves,Check haulage', [...document.querySelectorAll<HTMLElement>('[data-slot="case-dataflow-row"]')].map((e) => e.dataset.dataflow));
+  expect('the new row dataflow is out of date: it has not run', row?.dataset.upToDate === 'no' && (row.textContent ?? '').includes("hasn't run"), row?.textContent);
+  expect('its range and settings are said', (row?.textContent ?? '').includes('strip 1-3') && (row?.textContent ?? '').includes('Check haul distances'), row?.textContent);
+  await picture?.('case-dataflows');
+  document.querySelector<HTMLButtonElement>('[data-slot="case-run-stale"]')?.click();
+  const ranSaid = await until(() => document.querySelector('[data-slot="case-said"]')?.textContent, 30_000);
+  expect("Run what's out of date runs the row dataflow alone", !!ranSaid && ranSaid.startsWith('Ran Check haulage on'), ranSaid);
+  const upToDate = await until(() => {
+    const r = listRow('Check haulage');
+    return r?.dataset.upToDate === 'yes' && listRow('Reserves')?.dataset.upToDate === 'yes' ? r : null;
+  }, 15_000);
+  expect('then both are up to date', !!upToDate);
+  (await opened2())?.querySelector<HTMLButtonElement>('[data-slot="case-open"]')?.click();
+  const rowView = await until(() => document.querySelector('[data-slot="row-dataflow"]'), 15_000);
+  expect('Open shows the row dataflow', !!rowView && (document.querySelector('[data-slot="case-dataflow"]')?.textContent ?? '').includes('Check haulage'));
+  const rowStep = (name: string) => document.querySelector<HTMLElement>(`[data-slot="row-dataflow"] [data-slot="case-step"][data-step="${name}"]`)?.click();
+  rowStep('tkm');
+  const tkm = () => document.querySelector<HTMLElement>('[data-slot="row-totals"] tr[data-column$="tkm"]');
+  const ranTkm = await until(() => {
+    const r = tkm();
+    return r && r.dataset.after ? r : null;
+  }, 15_000);
+  const cells = ranTkm ? [...ranTkm.querySelectorAll('td')].map((td) => td.textContent ?? '') : [];
+  expect('at tkm, its tonne-kilometres after the step are what its last run wrote', !!ranTkm && cells[1] === '—' && cells[2] === cells[3] && cells[2] !== '—', cells);
+  const was = Number(ranTkm?.dataset.after);
+  // Strips 1 and 2 typed from 2 to 4 km at the distance step: the tonne-kilometres run again, not saved.
+  rowStep('distance');
+  const km = await until(() => [...document.querySelectorAll<HTMLInputElement>('[data-slot="row-dataflow"] [data-slot="settings-by-seam"] input')].find((i) => i.value === '2'));
+  if (km) {
+    km.focus();
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(km, '4');
+    km.dispatchEvent(new Event('input', { bubbles: true }));
+    await wait(100);
+    rowStep('tkm');
+    const now = await until(() => {
+      const v = Number(tkm()?.dataset.after);
+      return v && Math.abs(v - was) > 1 ? v : null;
+    }, 15_000);
+    expect('typed 4 km on strips 1 and 2, the tonne-kilometres run again', !!now && now > was, { was, now });
+    await picture?.('case-row-dataflow');
+    km.blur();
+    [...document.querySelectorAll<HTMLButtonElement>('[data-slot="row-dataflow"] button')].find((b) => b.textContent?.includes('Discard'))?.click();
+    const back = await until(() => (Math.abs(Number(tkm()?.dataset.after) - was) <= 1e-6 * Math.max(1, was) ? true : null), 15_000);
+    expect('discarded, as saved again', !!back);
+  } else expect('the distance setting is there to type', false);
   return { ...results, failures };
 }

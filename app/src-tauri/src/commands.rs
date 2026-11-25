@@ -1110,6 +1110,9 @@ pub struct CaseStepView {
     saved: zd_commands::builtin::StepTotals,
     now: Option<zd_commands::builtin::StepTotals>,
     blocks: Vec<zd_commands::builtin::ColumnDid>,
+    /// The case through every step as saved, and as edited where there are edits (decision 10, the flow).
+    saved_flow: Vec<zd_commands::builtin::FlowStep>,
+    now_flow: Option<Vec<zd_commands::builtin::FlowStep>>,
 }
 
 /// A reserves table's case at step `step` (0 for its blocks as read): kept between asks, as saved and as edited
@@ -1157,11 +1160,46 @@ pub async fn reserves_case_step(
             } else {
                 kept.live = None;
             }
+            let saved_flow = kept.saved.flow();
+            let now_flow = kept.live.as_mut().map(|l| l.flow());
             let shown = kept.live.as_ref().unwrap_or(&kept.saved);
-            Ok(CaseStepView { saved: kept.saved.totals(), now: kept.live.as_ref().map(|l| l.totals()), blocks: shown.columns() })
+            Ok(CaseStepView { saved: kept.saved.totals(), now: kept.live.as_ref().map(|l| l.totals()), blocks: shown.columns(), saved_flow, now_flow })
         })();
         inner.case_kept = Some(kept);
         result
+    })
+    .await?
+}
+
+/// A case's dataflows in run order, each up to date or why not (Reserves case plan, decision 6): what Open another
+/// dataflow lists. Read from the run log each time.
+#[tauri::command]
+pub async fn case_state(table: ObjectId, state: State<'_, AppState>) -> Result<zd_commands::builtin::CaseState, String> {
+    let app = state.app.clone();
+    blocking(move || {
+        let app = app.lock().unwrap();
+        zd_commands::builtin::case_state(app.session.project(), app.session.log(), table).map_err(|e| e.to_string())
+    })
+    .await?
+}
+
+/// One of a case's row dataflows at step `step` (0 before its first), its rows in range before and after the step, on
+/// what's saved or as edited (`dataflow`, the row dataflow itself; `tables`, its settings tables). Nothing is kept.
+#[tauri::command]
+pub async fn row_dataflow_step(
+    table: ObjectId,
+    dataflow: ObjectId,
+    step: usize,
+    edited: Option<zd_core::Dataflow>,
+    tables: Option<Vec<(ObjectId, zd_core::ParameterTable)>>,
+    state: State<'_, AppState>,
+) -> Result<zd_commands::builtin::RowDataflowAtStep, String> {
+    let app = state.app.clone();
+    blocking(move || {
+        let app = app.lock().unwrap();
+        let project = app.session.project();
+        let edited = edited.map(|d| bound(project, d).map(|(d, _)| d)).transpose()?;
+        zd_commands::builtin::row_dataflow_at_step(project, table, dataflow, step, &unsaved(edited, tables)).map_err(|e| e.to_string())
     })
     .await?
 }

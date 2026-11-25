@@ -86,13 +86,13 @@ pub use measure::{MEASURES, Measure, MeasureParams, block_length, floor_dip, mea
 pub use reserves_run::{
     ColumnSteps, FormulaTraceView, ParamRead, StepKind, TraceLineView, column_trace, formula_trace, OUT_OF_MODEL, RunReserves, RunReservesParams, STEPS, StepView, StepWrite, UNDERBURDEN_THICKNESS, UnitView, Working, dataflow_starter, preston_sanders,
     reserves_preview, rerun_params, setup_of, table_column, StepUnits, units_at_step, ChangedSince, changed_since, Unsaved,
-    Balance, CaseAtStep, ColumnDid, SaidTotal, StepTime, StepTotals, Totals,
+    Balance, CaseAtStep, ColumnDid, FlowGroup, FlowStep, SaidTotal, StepTime, StepTotals, Totals,
 };
 pub use read_by::{ColumnRead, ReadBy, Reader, read_by};
 pub use setup_view::{BlocksView, FieldView, InputView, Named, SetupStep, SetupView, TableRead, setup_view};
 pub use table_setup::{SaveTableSetup, SaveTableSetupParams};
 pub use case_state::{CaseState, DataflowState, case_state};
-pub use row_dataflows::{RowFlow, RowsRan, RunRowDataflow, RunRowDataflowParams, check_case, row_columns_of, row_flow, row_flows, run_row_flow};
+pub use row_dataflows::{RowAt, RowColumnAt, RowDataflowAtStep, RowFlow, RowStepInfo, RowsRan, row_dataflow_at_step, RunRowDataflow, RunRowDataflowParams, check_case, row_columns_of, row_flow, row_flows, run_row_flow};
 pub use object_script::{ObjectScript, ObjectScriptParams};
 pub use table_import::{ImportTable, ImportTableParams, table_of_csv};
 pub use brief::{BriefAsk, BriefFor, ScriptKind, brief};
