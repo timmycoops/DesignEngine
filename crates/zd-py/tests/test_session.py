@@ -233,6 +233,8 @@ def a_case_runs_its_dataflows_in_order():
     assert [r["command"] for r in s.run_case(table, out_of_date=True)] == ["table.run_dataflow"]
     assert all(d["up_to_date"] for d in s.case_state(table)["dataflows"])
     assert [d["tables"] for d in s.case_state(table)["dataflows"]] == [["assumptions"], ["haul distances"]]
+    heads = s.case_headlines()
+    assert [(h["table"], h["base"]) for h in heads] == [(table, True)], heads
     # Haulage at its step (workstream 6): strip 1 at 3 km as saved, 67,500 t.km; at 4 km as edited, 90,000, not saved.
     at = s.row_step(table, "Haulage", 1)
     tkm = {c["field"]: c for c in at["columns"]}["tkm"]

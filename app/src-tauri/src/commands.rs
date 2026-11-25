@@ -222,6 +222,39 @@ pub async fn run_command(name: String, params: Value, state: State<'_, AppState>
     .await?
 }
 
+/// Every reserves table's headline figures, Base marked (Reserves case plan, decision 13): what the cases along Open
+/// another dataflow's foot show against Base.
+#[tauri::command]
+pub async fn case_headlines(state: State<'_, AppState>) -> Result<Vec<zd_commands::builtin::CaseHeadline>, String> {
+    let app = state.app.clone();
+    blocking(move || {
+        let app = app.lock().unwrap();
+        Ok(zd_commands::builtin::case_headlines(app.session.project()))
+    })
+    .await?
+}
+
+/// The starter dataflow and its settings table from a seam model (decision 0073), for New case in a project with no
+/// reserves dataflow (Reserves case plan, decision 13): two runs, each its own undo. The dataflow's id, and what changed.
+#[derive(Serialize)]
+pub struct StarterReply {
+    dataflow: ObjectId,
+    parameters: ObjectId,
+    changes: ProjectChanges,
+}
+
+#[tauri::command]
+pub async fn dataflow_starter(model: ObjectId, name: String, state: State<'_, AppState>) -> Result<StarterReply, String> {
+    let app = state.app.clone();
+    blocking(move || {
+        let mut app = app.lock().unwrap();
+        app.idle()?;
+        let (parameters, dataflow) = app.session.dataflow_starter(model, &name).map_err(|e| e.to_string())?;
+        Ok(StarterReply { dataflow, parameters, changes: changes(&mut app, false) })
+    })
+    .await?
+}
+
 /// Adds waste allocation to a dataflow (the Waste allocation plan, decision 7): its parameter tables where the project
 /// hasn't one of that name, then the dataflow saved with the schedule fields, allocation steps and checks added. Runs
 /// each undone on its own; what changed.
@@ -1323,8 +1356,9 @@ pub fn parameters_check(content: zd_core::ParameterTable) -> Result<(), String> 
 #[tauri::command]
 pub async fn dataflow_check(content: zd_core::Dataflow, state: State<'_, AppState>) -> Result<(), String> {
     content.check()?;
-    // An add-on (Table setup plan, decision 2) is checked with a main dataflow's names when one that lists it is saved.
-    if content.add_on {
+    // An add-on (Table setup plan, decision 2) is checked with a main dataflow's names when one that lists it is saved; a
+    // row dataflow (Reserves case plan, decision 2) a step at a time against a case's table, in the formula panel.
+    if content.add_on || content.rows {
         return Ok(());
     }
     let app = state.app.clone();
@@ -1349,6 +1383,26 @@ pub async fn dataflow_check(content: zd_core::Dataflow, state: State<'_, AppStat
         zd_commands::builtin::check_formula_steps(&content, &built_in, &declared).map(|_| ())
     })
     .await?
+}
+
+/// The columns a row dataflow's formula may read (Reserves case plan, workstream 7): every number column, with its unit,
+/// and every word column of the project's reserves tables, each once.
+fn case_columns(project: &zd_core::Project) -> (Vec<(String, String)>, Vec<String>) {
+    let (mut numbers, mut words): (Vec<(String, String)>, Vec<String>) = (Vec::new(), Vec::new());
+    for o in project.objects() {
+        let zd_core::Body::Table(t) = &o.body else { continue };
+        if t.setup.is_none() {
+            continue;
+        }
+        for c in &t.columns {
+            match &c.values {
+                zd_core::ColumnValues::Number(_) if !numbers.iter().any(|(n, _)| *n == c.name) => numbers.push((c.name.clone(), c.unit.clone())),
+                zd_core::ColumnValues::Text(_) if !words.contains(&c.name) => words.push(c.name.clone()),
+                _ => {}
+            }
+        }
+    }
+    (numbers, words)
 }
 
 /// A formula step of a dataflow as edited, checked (decision 0077, 7d): where it sits, every problem with its line, its
@@ -1376,6 +1430,11 @@ pub async fn formula_check(content: zd_core::Dataflow, index: usize, state: Stat
         };
         // The tables it looks up by name, so its worked examples can look them up as a run does.
         let named = zd_commands::builtin::bind_lookups(project.objects(), &content.steps.iter().filter_map(|s| s.script()).collect::<Vec<_>>()).map(|(_, named)| named).unwrap_or_default();
+        if content.rows {
+            // A row dataflow's formula reads a case's table: the columns of the project's reserves tables.
+            let (numbers, words) = case_columns(project);
+            return zd_commands::builtin::check_row_formula(&content, &refs, index, &numbers, &words, libraries, named);
+        }
         zd_commands::builtin::check_formula_with(&content, &refs, index, &built_in, libraries, named)
     })
     .await?

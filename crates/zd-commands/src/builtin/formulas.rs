@@ -291,3 +291,67 @@ pub fn check_formula_with(d: &Dataflow, tables: &[&ParameterTable], index: usize
     }
     Ok(FormulaReport { stage, problems, tests, names })
 }
+
+/// A row dataflow's formula step as edited, checked (Reserves case plan, workstream 7): against the table's columns it
+/// may read (`numbers` with their units, `words`), its own fields and word fields, and its parameter tables' columns, as
+/// a run of it declares them. Every problem with its line and each known answer; a row dataflow's steps have no stage.
+pub fn check_row_formula(
+    d: &Dataflow,
+    tables: &[&ParameterTable],
+    index: usize,
+    numbers: &[(String, String)],
+    words: &[String],
+    libraries: zd_script::Libraries,
+    named: Vec<(String, std::sync::Arc<ParameterTable>)>,
+) -> Result<FormulaReport, String> {
+    let mut fields: Vec<FieldDecl> = Vec::new();
+    for (name, unit) in numbers {
+        if !fields.iter().any(|f| f.name == *name) {
+            fields.push(FieldDecl::number(name, unit));
+        }
+    }
+    for f in &d.fields {
+        if !fields.iter().any(|x| x.name == f.field.name) {
+            fields.push(FieldDecl::number(&f.field.name, d.units.get(&f.field.name).map_or("", String::as_str)));
+        }
+    }
+    for w in &d.words {
+        if !fields.iter().any(|x| x.name == w.name) {
+            fields.push(FieldDecl::text(&w.name));
+        }
+    }
+    let mut parameters: Vec<FieldDecl> = Vec::new();
+    for t in tables {
+        for c in &t.columns {
+            if !parameters.iter().any(|p| p.name == c.name) {
+                parameters.push(if c.text { FieldDecl::text(&c.name) } else { FieldDecl::number(&c.name, &c.unit) });
+            }
+        }
+    }
+    let declared = Declared {
+        fields,
+        labels: words.to_vec(),
+        parameters,
+        libraries,
+        lookups: std::sync::Arc::new(zd_script::Lookups { own: tables.iter().map(|t| std::sync::Arc::new((*t).clone())).collect(), named }),
+    };
+    let names = FormulaNames {
+        fields: declared.fields.iter().map(|f| (f.name.clone(), f.unit.clone())).collect(),
+        labels: declared.labels.clone(),
+        parameters: declared.parameters.iter().map(|p| (p.name.clone(), p.unit.clone(), p.kind == Kind::Text)).collect(),
+    };
+    let step = d.steps.get(index).ok_or_else(|| format!("the dataflow has no step {}", index + 1))?;
+    let f = step.formula.as_ref().ok_or_else(|| format!("{} isn't a formula step", step.step))?;
+    let mut problems = Vec::new();
+    let mut tests = Vec::new();
+    match Formula::compile(&f.script, declared) {
+        Err(found) => problems.extend(found.into_iter().map(|p| FormulaProblem { message: p.message, line: p.line })),
+        Ok(formula) => {
+            for t in &f.tests {
+                let held = test_result(t, &formula);
+                tests.push(FormulaTestResult { name: t.name.clone(), ok: held.is_ok(), why: held.err() });
+            }
+        }
+    }
+    Ok(FormulaReport { stage: None, problems, tests, names })
+}

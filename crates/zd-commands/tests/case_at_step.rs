@@ -369,3 +369,22 @@ fn the_flow_carries_the_case_through_every_step() {
     assert_eq!(from_start.flow(), flow);
     assert_eq!(at_end.flow(), flow);
 }
+
+/// Each case's headline figures (decision 13). ROM waste is the OB's 50,000 m³ and the A-B break's 25,000 with the
+/// 3,525 m³ of coal `rom_loss` takes, 78,525 BCM; the 20,000 m³ below B's floor isn't mined. ROM coal is the 21,475 m³
+/// left at RD 1.4, 30,065 t; the strip ratio 78,525 / 30,065 BCM/t. This dataflow has no `in_situ` step, so no in situ
+/// coal. A second case run on the same blocks under another name is set against Base, the same figures. 1e-9.
+#[test]
+fn each_case_has_its_headline_figures_against_base() {
+    let mut s = session();
+    let (table, _, flow, ids) = case(&mut s);
+    let tight = created(&s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves", "name": "Reserves Tight loss" })).unwrap())[0];
+    let heads = zd_commands::builtin::case_headlines(s.project());
+    assert_eq!(heads.iter().map(|h| (h.table, h.name.as_str(), h.base)).collect::<Vec<_>>(), [(table, "Reserves Base", true), (tight, "Reserves Tight loss", false)]);
+    let h = &heads[0];
+    assert!(close(h.rom_waste.unwrap(), 78_525.0), "{h:?}");
+    assert!(close(h.rom_coal.unwrap(), 21_475.0 * 1.4), "{h:?}");
+    assert!(close(h.strip_ratio.unwrap(), 78_525.0 / (21_475.0 * 1.4)), "{h:?}");
+    assert_eq!(h.insitu_coal, None);
+    assert!(close(heads[1].rom_coal.unwrap(), h.rom_coal.unwrap()) && close(heads[1].rom_waste.unwrap(), 78_525.0));
+}

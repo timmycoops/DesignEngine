@@ -33,7 +33,7 @@ export function FormulaEditor({
   onRemove: () => void;
   onClose: () => void;
 }) {
-  const { summary, selection, notebookOf, runInNotebook } = useWorkspace();
+  const { summary, selection, runInNotebook } = useWorkspace();
   const scripts = useProjectScripts();
   const parameterTables = useParameterTables();
   const step = flow.steps[index];
@@ -122,15 +122,10 @@ export function FormulaEditor({
             variant="outline"
             size="sm"
             className="h-6 px-2 text-xs"
-            disabled={!notebookOf}
             onClick={() => runInNotebook({ dataflowId: flowId, dataflow: flow, step: step.step })}
-            title={
-              !notebookOf
-                ? "Open a block's column in the Dataflow tab first (Reserves table, Open its column): it runs on this formula as it's typed"
-                : "This step in the Dataflow tab, which runs the column on the formula as it's typed, before it's saved: every step after it shows what the edit does. Nothing is kept."
-            }
+            title="This step in the Reserves case tab, which runs the whole case on the formula as it's typed, before it's saved: the flow and every step after it show what the edit does. Nothing is kept."
           >
-            <Waypoints className="size-3.5" /> Show in Dataflow
+            <Waypoints className="size-3.5" /> Show in the case
           </Button>
           <CopyForAi brief={{ kind: 'formula', dataflow: flowId, content: flow, source: step.formula?.script ?? '', name: step.step }} problems={report?.problems ?? []} />
           <IconButton label="Take this formula step out" className="size-6" onClick={onRemove}>

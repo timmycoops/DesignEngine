@@ -604,10 +604,10 @@ export function ReservesTable({ tableId, picker, onDeleted }: { tableId: string;
               size="sm"
               className="h-6 px-2 text-xs"
               disabled={!canOpenColumn}
-              title={canOpenColumn ? "This block's column in the Dataflow tab: its steps in a strip, what each read and wrote, and its units before and after each. An open Dataflow tab follows the block shown here without a press" :'Pick a block, or a seam or bench of one, to open its column in the Dataflow tab'}
+              title={canOpenColumn ? "This block in the Reserves case tab: the whole case a step at a time with this block on the map, its strip log and its units before and after each step. An open Reserves case tab follows the block shown here without a press" : 'Pick a block, or a seam or bench of one, to open it in the Reserves case tab'}
               onClick={() => table && openNotebook(table.id, columnNode)}
             >
-              <Columns3 className="size-3.5" /> Open its column
+              <Columns3 className="size-3.5" /> Open in the case
             </Button>
             <Button variant="outline" size="sm" className="h-6 px-2 text-xs" title="Pick the solids this node was made from, on the leaves the filter keeps, in the view, the tree and Blocks" onClick={() => void selectSolids()}>
               <MousePointerSquareDashed className="size-3.5" /> Select its solids

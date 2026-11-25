@@ -476,3 +476,30 @@ fn a_row_dataflow_steps_through_its_rows_before_and_after() {
     assert!(close(total(&e, "tkm").last_run.unwrap(), 337_500.0), "the last run as it was");
     assert!(zd_commands::builtin::row_dataflow_at_step(s.project(), id, haul, 3, &none).is_err(), "no third step");
 }
+
+/// A row dataflow's formula step checked as the formula panel checks it (workstream 7): against the case table's
+/// columns, its own fields and its settings, with no stage; the tonne-kilometres step holds, a misspelt field is said on
+/// its line, and a setting it hasn't is said too.
+#[test]
+fn a_row_dataflow_s_formula_is_checked_against_the_case_s_columns() {
+    let mut s = session();
+    let (id, _) = case(&mut s);
+    let (haul, distances) = haulage_in_two(&mut s);
+    let t = table(&s, id);
+    let numbers: Vec<(String, String)> = t.columns.iter().filter(|c| matches!(c.values, ColumnValues::Number(_))).map(|c| (c.name.clone(), c.unit.clone())).collect();
+    let words: Vec<String> = t.columns.iter().filter(|c| matches!(c.values, ColumnValues::Text(_))).map(|c| c.name.clone()).collect();
+    let Body::Dataflow(d) = &s.project().object(haul).unwrap().body else { panic!("a dataflow") };
+    let Body::ParameterTable(p) = &s.project().object(distances).unwrap().body else { panic!("a table") };
+    let check = |d: &zd_core::Dataflow, i: usize| zd_commands::builtin::check_row_formula(d, &[&**p], i, &numbers, &words, Default::default(), Vec::new()).unwrap();
+    for i in 0..2 {
+        let r = check(d, i);
+        assert!(r.problems.is_empty() && r.stage.is_none(), "step {i}: {:?}", r.problems);
+    }
+    let mut bad = (**d).clone();
+    bad.steps[1].formula.as_mut().unwrap().script = TKM.replace("row.distance", "row.distanse");
+    let r = check(&bad, 1);
+    assert!(r.problems.iter().any(|p| p.message.contains("distanse") && p.line == Some(2)), "{:?}", r.problems);
+    bad.steps[0].formula.as_mut().unwrap().script = "def formula(row, p):\n    row.distance = p.distanse\n".into();
+    let r = check(&bad, 0);
+    assert!(r.problems.iter().any(|p| p.message.contains("distanse")), "{:?}", r.problems);
+}

@@ -69,6 +69,8 @@ fn main() {
             commands::reserves_step_grid,
             commands::reserves_case_step,
             commands::case_state,
+            commands::case_headlines,
+            commands::dataflow_starter,
             commands::row_dataflow_step,
             commands::reserves_tree,
             commands::reserves_breakdown,

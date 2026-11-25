@@ -255,6 +255,14 @@ impl PySession {
         to_py(py, &serde_json::to_value(state).map_err(|e| CommandError::new_err(e.to_string()))?)
     }
 
+    /// Every reserves table's headline figures (Reserves case plan, decision 13): `[{table, name, base, insitu_coal,
+    /// rom_coal, rom_waste, strip_ratio}]`, tonnes, BCM and BCM/t from each table's own summary columns; Base is the first
+    /// named ... Base, else the first.
+    fn case_headlines(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let heads = zd_commands::builtin::case_headlines(self.inner.project());
+        to_py(py, &serde_json::to_value(heads).map_err(|e| CommandError::new_err(e.to_string()))?)
+    }
+
     /// A reserves table's case at a step (Reserves case plan, decisions 8 and 9): every column of its case run to `step`
     /// (a step's name, or its number, 0 for the blocks as read) and kept, on what's saved, with `tables` as edited
     /// (`{parameter table name or id: CSV text}`, read in place of those tables and never saved). Kept from the last call

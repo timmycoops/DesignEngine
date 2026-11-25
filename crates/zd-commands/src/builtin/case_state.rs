@@ -215,3 +215,38 @@ pub fn case_state(project: &zd_core::Project, log: &[LogEntry], table: ObjectId)
     }
     Ok(CaseState { table, name: object.name.clone(), dataflows: out })
 }
+
+/// A case's headline figures (Reserves case plan, decision 13): its in situ coal and ROM coal in tonnes, its ROM waste in
+/// BCM and its strip ratio (ROM waste BCM per ROM coal tonne), each its table's own summary column added up over every
+/// row by its rule; none where the table hasn't it. `base` marks the case the others are set against.
+#[derive(Debug, Clone, Serialize)]
+pub struct CaseHeadline {
+    pub table: ObjectId,
+    pub name: String,
+    pub base: bool,
+    pub insitu_coal: Option<f64>,
+    pub rom_coal: Option<f64>,
+    pub rom_waste: Option<f64>,
+    pub strip_ratio: Option<f64>,
+}
+
+/// Every reserves table's headline figures, in the project's order. Base is the first whose name ends in Base (case
+/// aside), else the first.
+pub fn case_headlines(project: &zd_core::Project) -> Vec<CaseHeadline> {
+    let mut out: Vec<CaseHeadline> = project
+        .objects()
+        .filter_map(|o| match &o.body {
+            Body::Table(t) if t.setup.is_some() || t.column(r"Summary\Ratios\rom_coal").is_some() => {
+                let rows: Vec<usize> = (0..t.rows()).collect();
+                let total = |n: &str| crate::reserves_view::add_up_column(t, &format!(r"Summary\Ratios\{n}"), &rows);
+                Some(CaseHeadline { table: o.id, name: o.name.clone(), base: false, insitu_coal: total("insitu_coal"), rom_coal: total("rom_coal"), rom_waste: total("rom_waste"), strip_ratio: total("strip_ratio") })
+            }
+            _ => None,
+        })
+        .collect();
+    let base = out.iter().position(|c| c.name.to_lowercase().ends_with("base")).unwrap_or(0);
+    if let Some(c) = out.get_mut(base) {
+        c.base = true;
+    }
+    out
+}

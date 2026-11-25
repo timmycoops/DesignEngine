@@ -1,6 +1,6 @@
-import { Braces, Save, Undo2 } from 'lucide-react';
+import { Braces, RotateCw, Save, Settings2, Undo2 } from 'lucide-react';
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
-import { type CaseState, caseState, type CaseStepView, type ColumnSteps, type ColumnUnit, type DataflowState, objectDetails, type ParameterTable, reservesCaseStep, reservesColumn, reservesRerunParams } from '@/bridge';
+import { type CaseState, caseState, type CaseStepView, type ColumnSteps, type ColumnUnit, type DataflowState, objectDetails, type ParameterTable, reservesCaseStep, reservesColumn, reservesColumnTrace, reservesRerunParams } from '@/bridge';
 import { PanelHead, Select, StatusBadge } from '@/design-system/kit';
 import { Button } from '@/design-system/ui/button';
 import { cn } from 'cn';
@@ -8,6 +8,10 @@ import { type Draft, useWorkspace } from '@/workspace/context';
 import { stepLabel, unitWords } from './columnSteps';
 import { writesByFolder } from './dataflowView';
 import { CaseFlow } from './CaseFlow';
+import { CaseSetup } from './CaseSetup';
+import { CasesBar } from './CasesBar';
+import { cellSummaries, focusOf } from './notebook';
+import { type CellTrace, StepPane } from './StepPane';
 import { rangeWords } from './flowStages';
 import { CaseSwitcher } from './CaseSwitcher';
 import { BlockMap, SettingsBySeam, StripLog, WholeCase } from './ReservesCaseParts';
@@ -77,6 +81,10 @@ export function ReservesCasePanel() {
   const [openFlow, setOpenFlow] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [caseSaid, setCaseSaid] = useState<{ text: string; refused: boolean } | null>(null);
+  // The case's Setup open under the band (workstream 7, the Setup tab's place), and the step unit by unit.
+  const [setupOpen, setSetupOpen] = useState(false);
+  const [unitOpen, setUnitOpen] = useState(false);
+  const [rerunning, setRerunning] = useState(false);
 
   // A new table starts again: its first step that does something, its busiest block.
   useEffect(() => {
@@ -177,6 +185,18 @@ export function ReservesCasePanel() {
     setBlock(best?.path ?? null);
   }, [view]);
 
+  // The block sent from the Reserves table's Open in the case: the block column it's in, once the case has run.
+  const sentBlock = useRef(0);
+  useEffect(() => {
+    if (!view || !notebookOf || notebookOf.n === sentBlock.current || notebookOf.node.length === 0 || notebookOf.table !== table?.id) return;
+    const node = notebookOf.node;
+    const hit = view.blocks.find((b) => b.path.length <= node.length && b.path.every((w, i) => node[i] === w));
+    if (!hit) return;
+    sentBlock.current = notebookOf.n;
+    setOpenFlow(null);
+    setBlock(hit.path);
+  }, [notebookOf?.n, view]);
+
   // The block's column through every step, on the edits, for its strip log, its reads and the steps' kinds.
   useEffect(() => {
     if (!table || !block) return;
@@ -206,6 +226,18 @@ export function ReservesCasePanel() {
       current = false;
     };
   }, [tableIds.join(','), changed]);
+
+  // The step sent from the formula panel's Show in the case: that step, once the column has it.
+  const sentStep = useRef(0);
+  useEffect(() => {
+    const edited = notebookOf?.edited;
+    if (!column || !edited || !notebookOf || notebookOf.n === sentStep.current) return;
+    const k = column.steps.findIndex((s) => s.step === edited.step && (s.dataflow ?? column.dataflow_id) === edited.dataflowId);
+    if (k < 1) return;
+    sentStep.current = notebookOf.n;
+    setOpenFlow(null);
+    setStep(k);
+  }, [notebookOf?.n, column]);
 
   const at = column && step !== null ? Math.min(step, column.steps.length - 1) : null;
   const cell = column && at !== null ? column.steps[at] : null;
@@ -272,6 +304,38 @@ export function ReservesCasePanel() {
   };
   const discard = () => edits?.tables.forEach(([id]) => setDraft(id, null));
 
+  // The step unit by unit (the Dataflow tab's step pane, decisions 0081 and 0082): the unit followed's workings, a
+  // formula traced on it, kept by what it ran on.
+  const summaries = useMemo(() => (column ? cellSummaries(column.steps) : []), [column]);
+  const into = before.find((u) => u.id === focus) ?? null;
+  const allocation = !!column && at !== null && at > 0 && column.steps[at].kind === 'allocation';
+  const traced = allocation ? (before[0] ?? null) : into;
+  const wanted = unitOpen && table && block && column && at !== null && at > 0 && (column.steps[at].kind === 'formula' || allocation) && traced ? `${table.id}|${block.join('/')}|${edits?.key ?? ''}|${at}|${allocation ? 'column' : traced.id}` : null;
+  const [traces, setTraces] = useState<Map<string, CellTrace>>(new Map());
+  useEffect(() => {
+    if (!wanted || !table || !block || at === null || !traced || traces.has(wanted)) return;
+    setTraces((m) => new Map(m).set(wanted, { state: 'loading' }));
+    void reservesColumnTrace(table.id, block, at, traced.id, edits?.dataflow ?? null, edits?.tables ?? [])
+      .then((trace) => setTraces((m) => new Map(m).set(wanted, { state: 'done', trace })))
+      .catch((e) => setTraces((m) => new Map(m).set(wanted, { state: 'failed', why: String(e) })));
+  }, [wanted]);
+  const trace = wanted ? (traces.get(wanted) ?? { state: 'loading' }) : null;
+
+  // The picked block, its strip or every block run again into the table from its setup (decision 0085): its next revision.
+  const runAgain = async (only: string[]) => {
+    if (!table) return;
+    setRerunning(true);
+    setCaseSaid(null);
+    try {
+      const reply = await runRecord('reserves.run', await reservesRerunParams(table.id, only));
+      setCaseSaid(reply.error ? { text: reply.error, refused: true } : { text: `${only.length ? only.join(' › ') : 'Every block'} run again into ${table.name}.`, refused: false });
+    } catch (e) {
+      setCaseSaid({ text: String(e), refused: true });
+    } finally {
+      setRerunning(false);
+    }
+  };
+
   // ↑ and ↓ step through the steps, away from a box being typed in.
   const steps = column?.steps ?? [];
   const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
@@ -285,8 +349,9 @@ export function ReservesCasePanel() {
 
   if (!table) {
     return (
-      <div className="p-3 text-xs text-muted-foreground" data-tool-panel="case">
-        No reserves table yet: run a reserves dataflow over blocks, and its case opens here a step at a time.
+      <div className="text-xs" data-tool-panel="case">
+        <CasesBar open={null} onOpen={setPick} onOpenDataflow={setOpenFlow} />
+        <p className="p-3 text-muted-foreground">No case yet: New case runs a reserves dataflow over blocks, and the case opens here a step at a time.</p>
       </div>
     );
   }
@@ -320,6 +385,9 @@ export function ReservesCasePanel() {
             {openState.why.length > 1 ? ' …' : ''}
           </span>
         )}
+        <Button size="sm" variant={setupOpen ? 'secondary' : 'outline'} className="h-6 gap-1 px-2" onClick={() => setSetupOpen((o) => !o)} data-slot="case-setup" title="What fills this case: its blocks, dataflows, settings tables in order and where each field comes from">
+          <Settings2 className="size-3" /> Setup
+        </Button>
         <label className="flex items-center gap-1">
           <span className="text-muted-foreground">in case</span>
           <Select className="h-6 w-44" aria-label="The reserves table whose case to show" value={table.id} onChange={(e) => setPick(e.target.value)}>
@@ -349,6 +417,8 @@ export function ReservesCasePanel() {
           )}
         </span>
       </div>
+      <CasesBar open={table.id} onOpen={setPick} onOpenDataflow={setOpenFlow} />
+      {setupOpen && <CaseSetup table={table.id} />}
       {caseSaid && (
         <div className={cn('px-2 py-1', caseSaid.refused ? 'text-destructive' : 'text-ok')} data-slot="case-said">
           {caseSaid.text}
@@ -479,12 +549,46 @@ export function ReservesCasePanel() {
                   {edits?.dataflow && <span className="text-muted-foreground">The dataflow's own edits save in the Parameters tab.</span>}
                 </div>
                 {said && <div className={said.refused ? 'text-destructive' : 'text-ok'}>{said.text}</div>}
+                <section className="border-t border-border pt-1" data-slot="case-unit-by-unit">
+                  <button type="button" className="text-muted-foreground hover:text-foreground hover:underline" onClick={() => setUnitOpen((o) => !o)}>
+                    {unitOpen ? '▾' : '▸'} This step unit by unit: {into ? unitWords(into) : 'the unit followed'}'s workings{cell.kind === 'formula' ? ' and its formula traced' : ''}
+                  </button>
+                  {unitOpen && column && (
+                    <StepPane
+                      column={column}
+                      at={at}
+                      summary={summaries[at]}
+                      focus={into ? focusOf(into) : null}
+                      trace={trace}
+                      onEdit={cell.kind === 'formula' || cell.kind === 'allocation' ? () => openTool('params', `formula:${cell.dataflow ?? column.dataflow_id}:${cell.step}`) : undefined}
+                      onWhole={() => setUnitOpen(false)}
+                      onSetting={(t, row, name) => openTool('params', `cell:${t}:${row}:${name}`)}
+                    />
+                  )}
+                </section>
               </>
             )}
           </div>
           {/* The block map and the picked block's strip log (decision 8). */}
           <div className="min-h-0 space-y-2 overflow-auto p-2" data-slot="case-blocks">
             <BlockMap blocks={view.blocks} picked={block} onPick={setBlock} />
+            <div className="flex flex-wrap items-center gap-1" data-slot="case-run-again">
+              <RotateCw className={cn('size-3 text-muted-foreground', rerunning && 'animate-spin')} />
+              <span className="text-muted-foreground">Run again</span>
+              {block && (
+                <Button size="sm" variant="outline" className="h-5 px-1.5 text-[11px]" disabled={rerunning} onClick={() => void runAgain(block)} title={`${block.join(' › ')} run again into the table from its setup, the rest kept`}>
+                  this block
+                </Button>
+              )}
+              {block && block.length > 1 && (
+                <Button size="sm" variant="outline" className="h-5 px-1.5 text-[11px]" disabled={rerunning} onClick={() => void runAgain(block.slice(0, -1))} title={`Every block of ${block.slice(0, -1).join(' › ')} run again into the table`}>
+                  its strip
+                </Button>
+              )}
+              <Button size="sm" variant="outline" className="h-5 px-1.5 text-[11px]" disabled={rerunning} onClick={() => void runAgain([])} title="Every block of the case run again into the table from its setup">
+                every block
+              </Button>
+            </div>
             {block && (
               <div className="space-y-1">
                 <div className="font-semibold">{block.join(' / ')}</div>
