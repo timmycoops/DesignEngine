@@ -32,6 +32,8 @@ create_exception!(zd, ProjectError, Error, "A project could not be opened or sav
 #[pyclass(module = "zd", name = "Session")]
 struct PySession {
     inner: Session,
+    /// Each reserves table's case kept at a step (Reserves case plan, decision 9), by table.
+    steps: std::collections::HashMap<ObjectId, zd_commands::builtin::CaseAtStep>,
 }
 
 #[pymethods]
@@ -39,14 +41,14 @@ impl PySession {
     /// A new, empty project.
     #[new]
     fn new() -> Self {
-        PySession { inner: Session::with_builtins() }
+        PySession { inner: Session::with_builtins(), steps: Default::default() }
     }
 
     /// Opens a `.zdp` project file, or an older `<name>.zdproj` folder. The run log carries on from where it was saved.
     #[staticmethod]
     fn open(py: Python<'_>, path: PathBuf) -> PyResult<Self> {
         let inner = py.detach(|| Session::open(&path)).map_err(|e| ProjectError::new_err(format!("{}: {e}", path.display())))?;
-        Ok(PySession { inner })
+        Ok(PySession { inner, steps: Default::default() })
     }
 
     /// Saves to a `.zdp` project file (a `.zdproj` path saves as a `.zdp` beside it); saving again re-encodes only what
@@ -253,6 +255,59 @@ impl PySession {
         to_py(py, &serde_json::to_value(state).map_err(|e| CommandError::new_err(e.to_string()))?)
     }
 
+    /// A reserves table's case at a step (Reserves case plan, decisions 8 and 9): every column of its case run to `step`
+    /// (a step's name, or its number, 0 for the blocks as read) and kept, on what's saved, with `tables` as edited
+    /// (`{parameter table name or id: CSV text}`, read in place of those tables and never saved). Kept from the last call
+    /// on the same table: an edit runs again from the first step that reads it, the steps before it reused, and a later
+    /// step runs on from where it is. The case's totals at the step: `{step, name, steps, columns, stopped, fields, units,
+    /// written, said, balance, ran_from, ran, kept_mb}`; units by material and what became of them, written by folder,
+    /// each `{group, count, values}`.
+    #[pyo3(signature = (table, step, tables=None))]
+    fn step_case(&mut self, py: Python<'_>, table: &str, step: &Bound<'_, PyAny>, tables: Option<std::collections::BTreeMap<String, String>>) -> PyResult<Py<PyAny>> {
+        let id = object_id(table)?;
+        let project = self.inner.project();
+        let mut edited = Vec::new();
+        for (key, csv) in tables.unwrap_or_default() {
+            let found = object_id(&key).ok().and_then(|i| project.object(i)).or_else(|| project.objects().find(|o| o.name == key && matches!(o.body, Body::ParameterTable(_))));
+            let object = found.ok_or_else(|| PyValueError::new_err(format!("no parameter table {key}")))?;
+            let parsed = zd_core::ParameterTable::from_csv(&csv).map_err(|e| PyValueError::new_err(format!("{key}: {e}")))?;
+            edited.push((object.id, std::sync::Arc::new(parsed)));
+        }
+        let unsaved = zd_commands::builtin::Unsaved { dataflow: None, tables: edited };
+        let refused = |e: zd_commands::CommandError| CommandError::new_err(e.to_string());
+        let mut case = match self.steps.remove(&id) {
+            Some(mut case) => {
+                case.rerun(project, self.inner.log(), &unsaved).map_err(refused)?;
+                case
+            }
+            None => zd_commands::builtin::CaseAtStep::open(project, self.inner.log(), id, 0, &unsaved).map_err(refused)?,
+        };
+        let n = match step.extract::<usize>() {
+            Ok(n) => n,
+            Err(_) => case.step_number(&step.extract::<String>()?).map_err(refused)?,
+        };
+        case.go_to(n).map_err(refused)?;
+        let totals = case.totals();
+        self.steps.insert(id, case);
+        to_py(py, &serde_json::to_value(totals).map_err(|e| CommandError::new_err(e.to_string()))?)
+    }
+
+    /// The units of a table's case at the step `step_case` keeps it at, a row a unit (Tables and scripts plan, decision
+    /// 10): `{step, upper, columns, stopped, table: {rows, units, columns}}`.
+    fn step_units(&self, py: Python<'_>, table: &str) -> PyResult<Py<PyAny>> {
+        let case = self.kept_case(table)?;
+        let units = case.units();
+        to_py(py, &json!({ "step": units.step, "upper": units.upper, "columns": units.columns, "stopped": units.stopped, "table": table_json(&units.table) }))
+    }
+
+    /// The table a table's case kept by `step_case` would make from its step: run on to the dataflow's last step and
+    /// written as a reserves run writes a new table, with the edits it was last given. Nothing is saved.
+    fn step_table(&self, py: Python<'_>, table: &str) -> PyResult<Py<PyAny>> {
+        let case = self.kept_case(table)?;
+        let made = case.table(self.inner.project()).map_err(|e| CommandError::new_err(e.to_string()))?;
+        to_py(py, &table_json(&made))
+    }
+
     /// Adds waste allocation to a dataflow (the Waste allocation plan, decision 7): its four parameter tables, where the
     /// project hasn't one of that name, then the dataflow saved with the schedule fields, allocation steps and checks
     /// added as the Waste allocation add-on the dataflow lists (Table setup plan, decision 2). Gives back
@@ -414,6 +469,14 @@ fn apply_licence(status: &zd_licence::Status) {
     set_licence_stamp(status.stamp());
 }
 
+impl PySession {
+    /// The case `step_case` keeps for a table, or why there's none.
+    fn kept_case(&self, table: &str) -> PyResult<&zd_commands::builtin::CaseAtStep> {
+        let id = object_id(table)?;
+        self.steps.get(&id).ok_or_else(|| PyValueError::new_err(format!("no case kept for {table}: open it at a step with step_case first")))
+    }
+}
+
 /// What this machine's licence says, where it stands, the modules on and this machine's code, as a dict.
 #[pyfunction]
 fn licence(py: Python<'_>) -> PyResult<Py<PyAny>> {
@@ -498,16 +561,20 @@ fn measures(body: &Body) -> Value {
         Body::ParameterTable(table) => json!({ "parameters": **table, "csv": table.to_csv() }),
         Body::Dataflow(d) => json!({ "dataflow": **d }),
         Body::Script(s) => json!({ "script": **s }),
-        // Columns by name, each a list of its values (None where there's none), and their units.
-        Body::Table(table) => json!({
-            "rows": table.rows(),
-            "units": table.columns.iter().map(|c| (c.name.clone(), json!(c.unit))).collect::<serde_json::Map<String, Value>>(),
-            "columns": table.columns.iter().map(|c| (c.name.clone(), match &c.values {
-                zd_core::ColumnValues::Number(v) => json!(v),
-                zd_core::ColumnValues::Text(v) => json!(v),
-            })).collect::<serde_json::Map<String, Value>>(),
-        }),
+        Body::Table(table) => table_json(table),
     }
+}
+
+/// A table's columns by name, each a list of its values (None where there's none), and their units.
+fn table_json(table: &zd_core::Table) -> Value {
+    json!({
+        "rows": table.rows(),
+        "units": table.columns.iter().map(|c| (c.name.clone(), json!(c.unit))).collect::<serde_json::Map<String, Value>>(),
+        "columns": table.columns.iter().map(|c| (c.name.clone(), match &c.values {
+            zd_core::ColumnValues::Number(v) => json!(v),
+            zd_core::ColumnValues::Text(v) => json!(v),
+        })).collect::<serde_json::Map<String, Value>>(),
+    })
 }
 
 /// A JSON value as Python objects, through Python's `json` module.

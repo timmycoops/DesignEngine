@@ -232,6 +232,36 @@ def a_case_runs_its_dataflows_in_order():
     assert s.case_state(table)["dataflows"][1]["why"] == ["Reserves ran after it"]
     assert [r["command"] for r in s.run_case(table, out_of_date=True)] == ["table.run_dataflow"]
     assert all(d["up_to_date"] for d in s.case_state(table)["dataflows"])
+    a_case_is_kept_at_a_step(s, table, assumptions)
+
+
+def a_case_is_kept_at_a_step(s, table, assumptions):
+    """Reserves case plan, decisions 8 and 9: the case of the two strips kept at `small_volumes`, then at `final`. Each
+    strip's coal, 15,000 m3, is over a minimum volume of 10 m3; edited to 20,000 m3 (not saved), `small_volumes` runs
+    again from the columns kept before it and sets both aside, 30,000 m3; the table from there has the table's rows, and
+    nothing is saved."""
+    edit = "when material,rd (t/m3),min_volume (m3)\nwaste,2.3,\ncoal,,{}\n"
+    s.run("parameters.save", table=assumptions, name="assumptions", csv=edit.format(10))
+    flow = s.table_setup(table)["dataflow"]
+    content = s.object(flow)["dataflow"]
+    content["steps"] = [{"step": "small_volumes"}] + content["steps"]
+    s.run("dataflow.save", dataflow=flow, name="Reserves", content=content)
+    s.run_case(table, dataflow=flow)
+    totals = s.step_case(table, "small_volumes")
+    assert (totals["step"], totals["name"], totals["steps"]) == (1, "small_volumes", ["small_volumes", "initialise", "final"]), totals
+    assert totals["balance"]["balanced"] and abs(totals["balance"]["volume_in"] - 130_000.0) < 1e-6, totals["balance"]
+    assert totals["said"] == [], totals["said"]
+    totals = s.step_case(table, "small_volumes", tables={"assumptions": edit.format(20_000)})
+    assert totals["ran_from"] == 1 and [r["name"] for r in totals["ran"]] == ["small_volumes"], totals["ran"]
+    said = {x["what"]: (x["units"], x["volume"]) for x in totals["said"]}
+    assert said["set aside as small volumes"][0] == 2 and abs(said["set aside as small volumes"][1] - 30_000.0) < 1e-6, said
+    units = s.step_units(table)
+    assert units["table"]["rows"] == 4 and units["step"] == "small_volumes", units
+    totals = s.step_case(table, "final", tables={"assumptions": edit.format(20_000)})
+    assert totals["ran_from"] is None and [r["name"] for r in totals["ran"]] == ["initialise", "final"], totals["ran"]
+    made = s.step_table(table)
+    assert made["rows"] == s.object(table)["rows"], made["rows"]
+    assert "coal,,10" in s.object(assumptions)["csv"], "the edit wasn't saved"
 
 
 def main():

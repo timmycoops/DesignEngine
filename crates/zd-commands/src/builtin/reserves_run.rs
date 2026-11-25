@@ -26,6 +26,9 @@ use super::blocks::horizon_order;
 use super::formulas;
 use zd_script::Problem;
 use super::measure::plan_area;
+
+mod at_step;
+pub use at_step::{Balance, CaseAtStep, SaidTotal, StepTime, StepTotals, Totals};
 use super::in_parallel_watched;
 use crate::{Code, Command, CommandError, CommandSpec, Field, FieldType, Inputs, Note, Outcome, Severity};
 
@@ -199,6 +202,9 @@ pub struct ColumnRun<'a> {
     /// What formulas placed onto other leaves of the column (Waste allocation plan, decision 5), written by `final` where
     /// the leaf has something scheduled on it.
     placed: Vec<Placement>,
+    /// The parameter columns looked up since it was last taken, while a case is kept at a step (Reserves case plan,
+    /// decision 9): what a step reads, so an edit reruns from the first step that reads it. None in a run.
+    asked: Option<std::cell::RefCell<std::collections::BTreeSet<String>>>,
 }
 
 /// A schedule field's value placed onto a leaf of the column (`unit.place_onto`, Waste allocation plan, decision 5): the
@@ -364,12 +370,24 @@ impl ColumnRun<'_> {
         let refs: Vec<&ParameterTable> = self.tables.iter().map(|t| t.as_ref()).collect();
         let found = ParameterTable::lookup_in(&refs, &self.attributes[self.column.units()[at].origin as usize], column);
         self.note_read(self.column.units()[at].id, column, found.as_ref());
+        self.note_asked(column);
         found.map(|f| f.value.clone())
+    }
+
+    /// Notes a parameter column looked up, while a case is kept at a step: by name, once.
+    fn note_asked(&self, column: &str) {
+        if let Some(asked) = &self.asked {
+            let mut asked = asked.borrow_mut();
+            if !asked.contains(column) {
+                asked.insert(column.to_string());
+            }
+        }
     }
 
     /// A parameter an allocation step read by the column's own attributes (its levels above the seam), traced in the
     /// notebook as a unit's are, on the unit given (the column's top one).
     fn lookup_for_column(&self, unit: Option<UnitId>, attributes: &Attributes, column: &str) {
+        self.note_asked(column);
         let Some(unit) = unit else { return };
         let refs: Vec<&ParameterTable> = self.tables.iter().map(|t| t.as_ref()).collect();
         let found = ParameterTable::lookup_in(&refs, attributes, column);
@@ -1220,6 +1238,7 @@ fn begin_column<'a>(prepared: &'a Prepared, key: &ColumnKey, blocks: &[Arc<Objec
         moves: Vec::new(),
         finalised: false,
         placed: Vec::new(),
+        asked: None,
     };
     for name in &mismatched {
         run.said.name("whose volume isn't its solid's (measured before it was cut again?)", name);
@@ -1827,6 +1846,14 @@ pub fn units_at_step(project: &zd_core::Project, log: &[crate::LogEntry], table:
         }
         Ok(view(&run, "", Vec::new()).units)
     });
+    let keys: Vec<&ColumnKey> = columns.iter().map(|(k, _)| *k).collect();
+    Ok(step_units(&prepared, step, &keys, ran))
+}
+
+/// The units of each column at a step as a table, a row a unit (Tables and scripts plan, decision 10): each column's
+/// units, or why it stopped before the step.
+fn step_units(prepared: &Prepared, step: usize, keys: &[&ColumnKey], ran: Vec<Result<Vec<UnitView>, String>>) -> StepUnits {
+    let columns: Vec<(&ColumnKey, ())> = keys.iter().map(|k| (*k, ())).collect();
     let fields = prepared.fields.list();
     let upper = prepared.upper.clone();
     let words = ["seam", "horizon", "material", "bench", "became", "section", "rom"];
@@ -1874,7 +1901,7 @@ pub fn units_at_step(project: &zd_core::Project, log: &[crate::LogEntry], table:
         table_columns.push(TableColumn { name: f.name.clone(), unit: unit_of_kind(f.kind).to_string(), add_up: Some(f.add_up.clone()), kind: zd_core::ColumnKind::Written, values: zd_core::ColumnValues::Number(v) });
     }
     let step_name = if step == 0 { "as input".to_string() } else { prepared.steps[step - 1].0.clone() };
-    Ok(StepUnits { step: step_name, upper, columns: columns.len(), stopped, table: Table { columns: table_columns, calculated: Vec::new(), setup: None, objects: false } })
+    StepUnits { step: step_name, upper, columns: columns.len(), stopped, table: Table { columns: table_columns, calculated: Vec::new(), setup: None, objects: false } }
 }
 
 /// A table's column made ready to run: the dataflow prepared with the table's own run's parameters, the column's key,
