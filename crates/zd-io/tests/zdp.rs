@@ -34,6 +34,8 @@ fn fuller_project() -> Project {
     let solid = named(&p, "seam A").id;
     p.set_objects_visible(&[solid], false);
     p.set_looks(&[topo.id], Some(Colouring::Layer), Some(0.4));
+    // A field set of the Reserves case tab's units table (Reserves case plan, decision 12): display state, saved.
+    p.set_field_sets(vec![zd_core::FieldSet { name: "Haul".into(), fields: vec!["volume".into(), "rd".into()] }]).unwrap();
     p
 }
 
@@ -58,6 +60,7 @@ fn a_project_comes_back_exactly_through_the_tables() {
     assert!(back.objects().all(|o| o.name != "scratch"), "deleted objects are not saved");
     assert_eq!(named(&back, "toe 1").revision, 3);
     assert!(back.is_hidden(named(&back, "seam A").id));
+    assert_eq!(back.display().field_sets, project.display().field_sets, "the field sets saved with it");
     assert!(!back.can_undo(), "undo history does not survive closing");
     let AttrValue::Number(ash) = named(&back, "topography copy").attributes["ash"] else { panic!("a number") };
     assert!(ash.is_nan());

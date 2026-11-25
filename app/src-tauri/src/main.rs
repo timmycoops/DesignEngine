@@ -47,6 +47,8 @@ fn main() {
             commands::set_layer_visible,
             commands::set_layer_filter,
             commands::set_reserves_filter,
+            commands::field_sets,
+            commands::set_field_sets,
             commands::reserves_filter_rows,
             commands::layer_attributes,
             commands::workflow_input_rows,

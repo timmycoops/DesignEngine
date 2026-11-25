@@ -8,6 +8,7 @@ import { type Draft, useWorkspace } from '@/workspace/context';
 import { stepLabel, unitWords } from './columnSteps';
 import { writesByFolder } from './dataflowView';
 import { BlockMap, SettingsBySeam, StripLog, WholeCase } from './ReservesCaseParts';
+import { UnitsTable } from './UnitsTable';
 import { mapMeasure, settingsGrid, shadeOf, stagesOf, stepSettings, suppliedFor, withCell } from './reservesCase';
 
 /**
@@ -246,7 +247,7 @@ export function ReservesCasePanel() {
   const balance = shown?.balance;
 
   return (
-    <div className="flex h-full min-h-0 flex-col text-xs" data-tool-panel="case" data-case={shown?.table ?? ''} onKeyDown={onKey}>
+    <div className="flex h-full min-h-0 flex-col overflow-auto text-xs" data-tool-panel="case" data-case={shown?.table ?? ''} onKeyDown={onKey}>
       <PanelHead line="A reserves table's case a step at a time: what each step reads and does to the whole case, its settings to change and see it run again." />
       {/* The band (decision 8): the dataflow open, its case, no ground made or lost. */}
       <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-2 py-1.5" data-slot="case-band">
@@ -299,7 +300,7 @@ export function ReservesCasePanel() {
       {liveWhy && <div className="px-2 py-1 text-warning" data-slot="live-why">Not run on the latest edit: {liveWhy}. Showing the last that ran.</div>}
       {!view && !error && <div className="p-3 text-muted-foreground">Running the case…</div>}
       {view && (
-        <div className="grid min-h-0 flex-1 grid-cols-[minmax(11rem,15rem)_minmax(0,1fr)_minmax(14rem,20rem)] divide-x divide-border" data-slot="case-columns">
+        <div className="grid h-[28rem] shrink-0 grid-cols-[minmax(11rem,15rem)_minmax(0,1fr)_minmax(14rem,20rem)] divide-x divide-border" data-slot="case-columns">
           {/* The steps by stage (decision 10). */}
           <div className="min-h-0 overflow-auto p-2" data-slot="case-steps">
             <div className="mb-1 text-muted-foreground">Steps · ↑ ↓ to step</div>
@@ -414,6 +415,8 @@ export function ReservesCasePanel() {
           </div>
         </div>
       )}
+      {/* The units table under the step view (decision 12). */}
+      {view && column && at !== null && block && <UnitsTable column={column} at={at} block={block} />}
     </div>
   );
 }

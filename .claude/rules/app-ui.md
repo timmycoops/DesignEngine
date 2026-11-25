@@ -61,7 +61,8 @@ red refused, green valid. Don't hand-roll an input, select, badge or colour a ki
   revision and not undone. Hidden means not drawn, snapped to or cut by a section; a command that names the object
   still takes it (`docs/decisions/0026-one-layer-tree.md`). So is how it looks: surfaces and grids colour by RL in
   bands on round RLs, in the shader, over each one's own range by default, or in the layer's colour; and an opacity per
-  object and per layer, which multiply (`docs/decisions/0043-colour-by-rl-and-opacity.md`).
+  object and per layer, which multiply (`docs/decisions/0043-colour-by-rl-and-opacity.md`). So are the Reserves case
+  tab's own field sets (`Display.field_sets`, `set_field_sets`, 0105): saved with the next Save, never a revision.
 - Surfaces and grids are drawn a hair farther than they are (a depth offset), so where a solid lies on a surface, as
   the overburden's top on the topography or a block's floor on its seam grid, the solid shows and not patches of both.
   Solids are drawn where they are: pulled nearer, one block's floor came through the next one's wall

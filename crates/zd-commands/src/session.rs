@@ -467,6 +467,11 @@ impl Session {
         Arc::make_mut(&mut self.project).set_reserves_filter(filter)
     }
 
+    /// See [`Project::set_field_sets`]. Display state only: not a command, not undone.
+    pub fn set_field_sets(&mut self, sets: Vec<zd_core::FieldSet>) -> Result<bool, String> {
+        Arc::make_mut(&mut self.project).set_field_sets(sets)
+    }
+
     /// See [`Project::set_contours`]. Display state only.
     pub fn set_contours(&mut self, contours: Contours) -> bool {
         Arc::make_mut(&mut self.project).set_contours(contours)

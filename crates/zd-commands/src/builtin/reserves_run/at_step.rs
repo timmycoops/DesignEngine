@@ -738,7 +738,7 @@ impl CaseAtStep {
             steps: self.prepared.steps.iter().map(|(n, _, _)| n.clone()).collect(),
             columns: self.at.len() - stopped.len(),
             stopped,
-            fields: fields.iter().map(|f| ColumnField { name: f.name.clone(), unit: super::unit_of_kind(f.kind), kind: f.kind }).collect(),
+            fields: fields.iter().map(|f| ColumnField { name: f.name.clone(), unit: super::unit_of_kind(f.kind), kind: f.kind, add_up: f.add_up.clone() }).collect(),
             units,
             written,
             said: self.said(),

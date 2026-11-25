@@ -118,5 +118,69 @@ export async function checkCase(path: string, log: (line: string) => void, show:
   const rom = await until(() => caseRow('ROM coal'), 15_000);
   expect('at final, ROM coal 9,234,489 t', (rom?.[1] ?? '').includes('9,234,489'), rom);
   await picture?.('case-final');
+
+  // A picture leaves out scroll positions (windowPicture): the step view out of the way for a moment, so the units
+  // table under it is in the picture.
+  const unitsPicture = async (name: string) => {
+    const above = document.querySelector<HTMLElement>('[data-slot="case-columns"]');
+    if (above) above.style.display = 'none';
+    await picture?.(name);
+    if (above) above.style.display = '';
+  };
+  // The units table (decision 12, workstream 5): B5 at rom_loss, its U's pieces adding to what U was, the groups'
+  // subtotals the block's, the pieces that left listed red, a field set kept and taken away, a piece's journey.
+  document.querySelector<HTMLElement>('[data-tool-panel="case"] [data-slot="case-step"][data-step="rom_loss"]')?.click();
+  const b5 = await until(() => document.querySelector<HTMLElement>('[data-slot="map-block"][data-block="Pit 3 B5"]'));
+  b5?.click();
+  const table = await until(() => {
+    const head = document.querySelector('[data-slot="units-table"]')?.textContent ?? '';
+    return head.includes('Pit / 3 / B5 before and after rom_loss') && document.querySelectorAll('[data-slot="units-row"]').length > 0 ? head : null;
+  }, 20_000);
+  expect('the units table shows B5 before and after rom_loss', !!table);
+  const rows = [...document.querySelectorAll<HTMLElement>('[data-slot="units-row"]')];
+  const num = (e: HTMLElement, key: string) => (e.dataset[key] ? Number(e.dataset[key]) : 0);
+  const kept = rows.find((r) => r.dataset.horizon === 'U' && r.dataset.left === 'no' && r.dataset.volumeBefore);
+  if (kept) {
+    const id = kept.dataset.from;
+    const pieces = rows.filter((r) => r.dataset.left === 'no' && r.dataset.from === id);
+    const was = num(kept, 'volumeBefore');
+    const sum = pieces.reduce((s, r) => s + num(r, 'volumeAfter'), 0);
+    expect("U's pieces add to the volume U was", Math.abs(sum - was) <= 1e-9 * Math.max(1, was), { pieces: pieces.length, was, sum });
+  } else expect("U's pieces add to the volume U was", false, 'no U row');
+  // Each piece once (a piece that left is listed twice), against the groups' subtotals.
+  const unique = new Map(rows.map((r) => [r.dataset.row, r]));
+  const block = (side: 'volumeBefore' | 'volumeAfter') => [...unique.values()].reduce((s, r) => s + num(r, side), 0);
+  const groups = [...document.querySelectorAll<HTMLElement>('[data-slot="units-group"] [data-field="volume"]')];
+  const subtotal = (side: 'before' | 'after') => groups.reduce((s, c) => s + num(c, side), 0);
+  for (const [side, key] of [['before', 'volumeBefore'], ['after', 'volumeAfter']] as const) {
+    const want = block(key);
+    expect(`the groups' volumes add to the block's ${side} the step`, Math.abs(subtotal(side) - want) <= 1e-9 * Math.max(1, want), { groups: subtotal(side), block: want });
+  }
+  const left = rows.filter((r) => r.dataset.left === 'yes').length;
+  expect('the pieces that left their section are listed there in red', left > 0, left);
+  await unitsPicture('case-units');
+  // A field set of one's own, kept with the project and taken away again.
+  const save = [...document.querySelectorAll<HTMLButtonElement>('[data-slot="units-table"] button')].find((b) => b.textContent === 'Save as a set');
+  save?.click();
+  const name = await until(() => document.querySelector<HTMLInputElement>('input[aria-label="The new field set\'s name"]'));
+  if (name) {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(name, 'Check set');
+    name.dispatchEvent(new Event('input', { bubbles: true }));
+    await wait(100);
+    [...document.querySelectorAll<HTMLButtonElement>('[data-slot="units-table"] button')].find((b) => b.textContent === 'Save')?.click();
+  }
+  const listed = await until(() => [...document.querySelectorAll<HTMLOptionElement>('select[aria-label="The field set shown"] option')].some((o) => o.value === 'Check set'), 10_000);
+  expect('a field set saved with the project shows in the list', !!listed);
+  [...document.querySelectorAll<HTMLButtonElement>('[data-slot="units-table"] button')].find((b) => b.textContent === 'Delete Check set')?.click();
+  const gone = await until(() => ![...document.querySelectorAll<HTMLOptionElement>('select[aria-label="The field set shown"] option')].some((o) => o.value === 'Check set'), 10_000);
+  expect('and deleted, it is gone', !!gone);
+  // The picked piece: a loss piece, made at rom_loss.
+  rows.find((r) => r.dataset.left === 'yes')?.click();
+  const journey = await until(() => document.querySelector('[data-slot="journey"]')?.textContent, 10_000);
+  expect("a piece's journey says the step made it", !!journey && journey.includes('rom_loss: made here'), journey);
+  [...document.querySelectorAll<HTMLButtonElement>('[data-slot="units-table"] button')].find((b) => b.textContent === 'Field map')?.click();
+  const map = await until(() => document.querySelector('[data-slot="field-map"]')?.textContent, 10_000);
+  expect('the field map shows what each step writes', !!map && map.includes('W'), map?.slice(0, 80));
+  await unitsPicture('case-units-picked');
   return { ...results, failures };
 }

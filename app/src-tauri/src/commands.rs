@@ -618,6 +618,22 @@ pub async fn set_reserves_filter(filter: Option<zd_core::ReservesFilter>, state:
     Ok(changes_after_hiding(&mut app))
 }
 
+/// The units table's field sets a planner named (Reserves case plan, decision 12), in the order made.
+#[tauri::command]
+pub async fn field_sets(state: State<'_, AppState>) -> Result<Vec<zd_core::FieldSet>, String> {
+    Ok(state.app.lock().unwrap().session.project().display().field_sets.clone())
+}
+
+/// The units table's field sets as a planner named them, in place of those there: display state, saved with the
+/// project, not undone. Each named once and none a built-in set's; what's kept is given back.
+#[tauri::command]
+pub async fn set_field_sets(sets: Vec<zd_core::FieldSet>, state: State<'_, AppState>) -> Result<Vec<zd_core::FieldSet>, String> {
+    let mut app = state.app.lock().unwrap();
+    app.idle()?;
+    app.session.set_field_sets(sets)?;
+    Ok(app.session.project().display().field_sets.clone())
+}
+
 /// Every attribute of what's on a layer and the layers under it, an object a row: what the filter box lists and counts
 /// to tick (decision 0088). Only what the layer tree speaks for: no face designs, workflows, tables or dataflows.
 #[tauri::command]
