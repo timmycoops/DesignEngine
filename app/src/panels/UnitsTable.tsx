@@ -1,10 +1,10 @@
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { type ColumnSteps, type FieldSet, fieldSets, setFieldSets } from '@/bridge';
 import { Choice, Select } from '@/design-system/kit';
 import { Button } from '@/design-system/ui/button';
 import { cn } from 'cn';
 import { unitWords, valueText } from './columnSteps';
-import { fieldMap, fieldsOfSet, GROUP_WORDS, type GroupBy, journeyOf, lastWriter, OWN_SETS, type PieceRow, piecesOf, rowChanged, rowWords, unitGroups } from './caseUnits';
+import { fieldMap, fieldsOfSet, GROUP_WORDS, type GroupBy, journeyOf, OWN_SETS, type PieceField, type PieceGroup, type PieceRow, pieceSheet, piecesOf, rowChanged, rowWords, unitGroups } from './caseUnits';
 
 /**
  * The units table (the Build Plan's "Reserves case plan", decision 12, workstream 5): under the step view, the picked
@@ -177,7 +177,10 @@ export function UnitsTable({ column, at, block, fill = false }: { column: Column
               </tr>
             </thead>
             <tbody>
-              {groups.map((g) => {
+              {/* The picked unit opens under its first row (Case setup and unit plan, decision 8). */}
+              {(() => {
+                let placed = false;
+                return groups.map((g) => {
                 const listed = g.rows.filter((r) => !changedOnly || r.left || rowChanged(r.row, shown));
                 return (
                   <Fragment key={g.name}>
@@ -194,7 +197,10 @@ export function UnitsTable({ column, at, block, fill = false }: { column: Column
                     </tr>
                     {listed.map(({ row, left }) => {
                       const u = row.after ?? row.before!;
+                      const sheetHere = !placed && pickedRow !== null && row.key === pickedRow.key;
+                      if (sheetHere) placed = true;
                       return (
+                        <Fragment key={`${g.name}${row.key}${left}`}>
                         <tr
                           key={`${g.name}${row.key}${left}`}
                           className={cn('cursor-pointer border-t border-border/50 hover:bg-accent', left && 'text-destructive', picked === row.key && 'bg-selection')}
@@ -215,62 +221,128 @@ export function UnitsTable({ column, at, block, fill = false }: { column: Column
                             </td>
                           ))}
                         </tr>
+                        {sheetHere && (
+                          <tr data-slot="picked-piece-row">
+                            <td colSpan={2 + shown.length} className="px-1 pt-1 pb-2">
+                              <PickedPiece column={column} at={at} block={block} row={row} onClose={() => setPicked(null)} />
+                            </td>
+                          </tr>
+                        )}
+                        </Fragment>
                       );
                     })}
                   </Fragment>
                 );
-              })}
+                });
+              })()}
             </tbody>
           </table>
         </div>
-        {pickedRow && <PickedPiece column={column} at={at} row={pickedRow} onClose={() => setPicked(null)} />}
       </div>
       {map && <FieldMap column={column} at={at} fields={shown} />}
     </section>
   );
 }
 
-/** The picked piece (decision 12): every field before and after, the last step to write it, and its journey. */
-function PickedPiece({ column, at, row, onClose }: { column: ColumnSteps; at: number; row: PieceRow; onClose: () => void }) {
+/**
+ * The picked piece (decision 12), opened under its row across the units table (Case setup and unit plan, decisions 5
+ * to 8): a title naming the unit, its block and the step; Before and After that step, no Before for a unit the step
+ * made; the fields the step changed first and lit, the rest after, each under its path's heading by its short name;
+ * those empty or at nought folded; Last written "this step", dimmed, or the step's number and name; and its journey.
+ * Esc or × closes it.
+ */
+function PickedPiece({ column, at, block, row, onClose }: { column: ColumnSteps; at: number; block: string[]; row: PieceRow; onClose: () => void }) {
   const u = row.after ?? row.before!;
   const journey = journeyOf(column.steps, at, u.id, column.fields.find((f) => f.kind === 'volume')?.name);
+  const sheet = pieceSheet(column.steps, at, row, column.fields);
+  const [quietOpen, setQuietOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => box.current?.focus({ preventScroll: true }), [row.key]);
+  const stepWords = at > 0 ? `step ${at}` : 'as read';
+  const quietCount = sheet.quiet.reduce((n, g) => n + g.fields.length, 0);
+  const cols = sheet.made ? 'grid-cols-[minmax(9rem,1fr)_7.5rem_minmax(5rem,9rem)]' : 'grid-cols-[minmax(9rem,1fr)_7.5rem_7.5rem_minmax(5rem,9rem)]';
+  const fieldRow = (f: PieceField) => (
+    <div key={f.name} className={cn('grid items-baseline gap-x-2 border-t border-border/40', cols)} data-slot="piece-field" data-field={f.name} data-writer={f.writer}>
+      <span className="truncate whitespace-nowrap" title={f.name} data-slot="piece-field-name">
+        {f.short}
+        {f.unit && <span className="pl-1 text-[10px] text-muted-foreground">{f.unit}</span>}
+      </span>
+      {!sheet.made && <span className="text-right text-muted-foreground tabular-nums">{valueText(f.before, f.unit)}</span>}
+      <span className={cn('text-right tabular-nums', f.changed && 'font-semibold text-edited')}>{valueText(f.after, f.unit)}</span>
+      <span className={cn('truncate pl-1 whitespace-nowrap', f.thisStep ? 'text-muted-foreground/60' : 'text-muted-foreground')}>{f.writer}</span>
+    </div>
+  );
+  const groupList = (groups: PieceGroup[]) =>
+    groups.map((g) => (
+      <div key={g.path ?? ''} className="break-inside-avoid" data-slot="piece-group" data-path={g.path ?? ''}>
+        {g.path && (
+          <div className="pt-1.5 font-semibold text-muted-foreground" data-slot="piece-group-path">
+            {g.path}
+          </div>
+        )}
+        {g.fields.map(fieldRow)}
+      </div>
+    ));
   return (
-    <aside className="w-72 shrink-0 space-y-1.5 border-l border-border pl-2" data-slot="picked-piece">
+    <div
+      ref={box}
+      tabIndex={-1}
+      className="sticky left-0 max-w-[72rem] space-y-1.5 rounded border border-border bg-background p-2 outline-none"
+      data-slot="picked-piece"
+      data-made={sheet.made ? 'yes' : 'no'}
+      onKeyDown={(e) => e.key === 'Escape' && (e.preventDefault(), e.stopPropagation(), onClose())}
+    >
       <div className="flex items-baseline gap-2">
-        <span className="font-semibold">{unitWords(u)}</span>
-        <button type="button" className="ml-auto text-muted-foreground hover:text-foreground" onClick={onClose} aria-label="Close the picked piece">
+        <span className="text-[13px] font-semibold" data-slot="picked-piece-title">
+          {unitWords(u)} · {block.join(' / ')} · {at > 0 ? `step ${at} ${column.steps[at].step}` : 'as read'}
+        </span>
+        {sheet.made && <span className="text-muted-foreground">Made by this step: nothing before it.</span>}
+        {!row.after && <span className="text-muted-foreground">Taken away or joined into another by this step.</span>}
+        <button type="button" className="ml-auto px-1 text-muted-foreground hover:text-foreground" onClick={onClose} aria-label="Close the picked unit (Esc)" title="Close (Esc)">
           ×
         </button>
       </div>
-      <table className="w-full border-collapse">
-        <thead>
-          <tr className="text-muted-foreground">
-            <th className="text-left font-normal">Field</th>
-            <th className="text-right font-normal">Before</th>
-            <th className="text-right font-normal">After</th>
-            <th className="pl-1 text-left font-normal">Last written</th>
-          </tr>
-        </thead>
-        <tbody>
-          {column.fields.map((f) => (
-            <tr key={f.name} className="border-t border-border/50">
-              <td>{f.name}</td>
-              <td className="text-right tabular-nums">{valueText(row.before?.values[f.name] ?? null, f.unit)}</td>
-              <td className={cn('text-right tabular-nums', moved(row.before?.values[f.name], row.after?.values[f.name]) && 'text-edited')}>{valueText(row.after?.values[f.name] ?? null, f.unit)}</td>
-              <td className="pl-1 text-muted-foreground">{lastWriter(column.steps, at, u.id, f.name) ?? 'as read'}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <div className="text-muted-foreground">Its journey</div>
-      <ol className="space-y-0.5" data-slot="journey">
-        {journey.map((j) => (
-          <li key={j.step}>
-            <span className="text-muted-foreground tabular-nums">{j.step}</span> {j.name}: {j.what}
-          </li>
-        ))}
-      </ol>
-    </aside>
+      <div className="flex flex-wrap gap-x-6 gap-y-2">
+        <div className="min-w-0 flex-[3_1_28rem]">
+          <div className={cn('grid gap-x-2 text-muted-foreground', cols)}>
+            <span>Field</span>
+            {!sheet.made && (
+              <span className="text-right whitespace-nowrap" data-slot="piece-before-head">
+                Before {stepWords}
+              </span>
+            )}
+            <span className="text-right whitespace-nowrap">After {stepWords}</span>
+            <span className="pl-1">Last written</span>
+          </div>
+          {sheet.changed.length > 0 && (
+            <>
+              <div className="pt-1 font-semibold text-edited" data-slot="piece-changed">
+                Changed by this step
+              </div>
+              <div className="columns-[30rem] gap-x-6">{groupList(sheet.changed)}</div>
+              {sheet.rest.length > 0 && <div className="pt-1.5 font-semibold text-muted-foreground">The rest</div>}
+            </>
+          )}
+          <div className="columns-[30rem] gap-x-6">{groupList(sheet.rest)}</div>
+          {quietCount > 0 && (
+            <button type="button" className="mt-1 inline-flex items-center gap-0.5 text-muted-foreground hover:text-foreground" onClick={() => setQuietOpen((o) => !o)} aria-expanded={quietOpen} data-slot="piece-quiet" data-count={quietCount}>
+              {quietOpen ? '▾' : '▸'} {quietCount} more, empty or nought
+            </button>
+          )}
+          {quietOpen && <div className="columns-[30rem] gap-x-6">{groupList(sheet.quiet)}</div>}
+        </div>
+        <div className="min-w-0 flex-[1_1_14rem]">
+          <div className="text-muted-foreground">Its journey</div>
+          <ol className="space-y-0.5" data-slot="journey">
+            {journey.map((j) => (
+              <li key={j.step}>
+                <span className="text-muted-foreground tabular-nums">{j.step}</span> {j.name}: {j.what}
+              </li>
+            ))}
+          </ol>
+        </div>
+      </div>
+    </div>
   );
 }
 

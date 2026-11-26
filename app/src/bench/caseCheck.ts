@@ -194,6 +194,13 @@ export async function checkCase(path: string, log: (line: string) => void, show:
   );
   await picture?.('case-999');
   await layoutAt(null);
+  // The picked unit at full width, for the picture (Case setup and unit plan, decisions 5 to 8): a loss piece.
+  document.querySelector<HTMLElement>('[data-slot="units-row"][data-left="yes"]')?.click();
+  if (await until(() => document.querySelector('[data-slot="picked-piece"]'), 5_000)) {
+    await picture?.('case-picked-unit');
+    document.querySelector<HTMLElement>('[aria-label="Close the picked unit (Esc)"]')?.click();
+    await until(() => !document.querySelector('[data-slot="picked-piece"]'), 5_000);
+  }
   if (api.hasMaximizedGroup()) api.exitMaximizedGroup();
   await wait(300);
   const rows = [...document.querySelectorAll<HTMLElement>('[data-slot="units-row"]')];
@@ -234,9 +241,33 @@ export async function checkCase(path: string, log: (line: string) => void, show:
   const gone = await until(() => ![...document.querySelectorAll<HTMLOptionElement>('select[aria-label="The field set shown"] option')].some((o) => o.value === 'Check set'), 10_000);
   expect('and deleted, it is gone', !!gone);
   // The picked piece: a loss piece, made at rom_loss.
-  rows.find((r) => r.dataset.left === 'yes')?.click();
+  const lossRow = rows.find((r) => r.dataset.left === 'yes');
+  const lossKey = lossRow?.dataset.row;
+  lossRow?.click();
   const journey = await until(() => document.querySelector('[data-slot="journey"]')?.textContent, 10_000);
   expect("a piece's journey says the step made it", !!journey && journey.includes('rom_loss: made here'), journey);
+  // The picked unit (Case setup and unit plan, decisions 5 to 8): under its row, across the table, said plainly.
+  const sheetRow = document.querySelector<HTMLTableRowElement>('[data-slot="units-table"] [data-slot="picked-piece-row"]');
+  const above = sheetRow?.previousElementSibling as HTMLElement | null;
+  const across = (sheetRow?.querySelector('td')?.colSpan ?? 0) === document.querySelectorAll('[data-slot="units-grid"] thead th').length;
+  expect('the picked unit opens under its row, across the units table', !!sheetRow && above?.dataset.slot === 'units-row' && above.dataset.row === lossKey && across, { under: above?.dataset.row, picked: lossKey, across });
+  const sheetTitle = document.querySelector('[data-slot="picked-piece-title"]')?.textContent ?? '';
+  expect('its title names the unit, its block and the step', sheetTitle.includes('B5') && sheetTitle.includes('rom_loss') && /step \d+/.test(sheetTitle), sheetTitle);
+  const sheet = document.querySelector<HTMLElement>('[data-slot="picked-piece"]');
+  const writers = [...(sheet?.querySelectorAll<HTMLElement>('[data-slot="piece-field"]') ?? [])].map((e) => e.dataset.writer);
+  expect(
+    'a unit the step made has no Before, every field written by this step',
+    sheet?.dataset.made === 'yes' && !sheet.querySelector('[data-slot="piece-before-head"]') && writers.length > 0 && writers.every((w) => w === 'this step'),
+    { made: sheet?.dataset.made, writers: [...new Set(writers)] },
+  );
+  const names = [...(sheet?.querySelectorAll<HTMLElement>('[data-slot="piece-field-name"]') ?? [])];
+  const tall = names.filter((n) => n.getBoundingClientRect().height > 22 || (n.textContent ?? '').includes('\\')).map((n) => n.textContent);
+  const pathFields = [...(sheet?.querySelectorAll<HTMLElement>('[data-slot="piece-field"]') ?? [])].filter((e) => (e.dataset.field ?? '').includes('\\')).length;
+  const headings = sheet?.querySelectorAll('[data-slot="piece-group-path"]').length ?? 0;
+  expect('no field name wraps, and one named as a path sits under its heading', names.length > 0 && tall.length === 0 && (pathFields === 0 || headings > 0), { names: names.length, tall, pathFields, headings });
+  sheet?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  const sheetGone = await until(() => !document.querySelector('[data-slot="picked-piece"]'), 5_000);
+  expect('Esc closes the picked unit', !!sheetGone);
   [...document.querySelectorAll<HTMLButtonElement>('[data-slot="units-table"] button')].find((b) => b.textContent === 'Field map')?.click();
   const map = await until(() => document.querySelector('[data-slot="field-map"]')?.textContent, 10_000);
   expect('the field map shows what each step writes', !!map && map.includes('W'), map?.slice(0, 80));
