@@ -503,3 +503,26 @@ fn a_row_dataflow_s_formula_is_checked_against_the_case_s_columns() {
     let r = check(&bad, 0);
     assert!(r.problems.iter().any(|p| p.message.contains("distanse")), "{:?}", r.problems);
 }
+
+/// Blocks taken out of what the setup picks (Case setup and unit plan, decision 2): a change in the Setup shows the case
+/// out of date with why, so the case is run from Run, not from the Setup. Known answer: strips 7 and 8 taken out, 4 blocks
+/// (an OB and an L each); the run again on what's picked brings it up to date.
+#[test]
+fn blocks_taken_out_of_the_setup_put_the_case_out_of_date() {
+    let mut s = session();
+    let (id, _) = case(&mut s);
+    let why = |s: &Session| zd_commands::builtin::case_state(s.project(), s.log(), id).unwrap().dataflows[0].why.clone();
+    assert!(why(&s).is_empty(), "up to date after its run: {:?}", why(&s));
+
+    let blocks = s.project().layer_named("blocks").unwrap().id;
+    let kept: Vec<ObjectId> = s.project().objects().filter(|o| o.layer == blocks && !o.name.starts_with('7') && !o.name.starts_with('8')).map(|o| o.id).collect();
+    assert_eq!(kept.len(), 12);
+    let mut setup = serde_json::to_value(table(&s, id).setup.unwrap()).unwrap();
+    setup["blocks"] = json!({ "ids": kept });
+    s.run("table.setup", json!({ "table": id, "setup": setup })).unwrap();
+    assert_eq!(why(&s), ["4 blocks no longer picked by the setup"]);
+
+    let p = rerun_params(s.project(), s.log(), id, &[]).unwrap();
+    s.run("reserves.run", serde_json::to_value(&p).unwrap()).unwrap();
+    assert!(why(&s).is_empty(), "run again on what's picked: {:?}", why(&s));
+}

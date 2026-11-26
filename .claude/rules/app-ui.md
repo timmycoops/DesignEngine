@@ -22,7 +22,7 @@ the case's dataflows as a chain with Run and Setup, the open case's figures and 
 as the step list, then the step, the units table and the block map side by side to the foot of the dock (folding under
 each other under 1,400 and 1,000 px, by the tab's own width); each part said once, help in tips, not lines. Its Run lists the case's dataflows (`case_state`) and runs them by
 `reserves.run` and `table.run_dataflow`, as Python's `run_case` does, each its own undo; a row dataflow opens in the same tab from the chain. Its cases (`CasesBar`) make New case, Copy case and Add a dataflow
-from existing commands, each its own undo, and its Setup (`CaseSetup`) is the old Setup tab fixed to the case open. Tables holds every table, picked from its Table list: Objects, then each reserves table, one grid
+from existing commands, each its own undo, and its Setup (`CaseSetup`) is the old Setup tab fixed to the case open, its own view in place of the working area with Done (0107): it has no Run, a change putting the case out of date for Run to run. Tables holds every table, picked from its Table list: Objects, then each reserves table, one grid
 for both (`docs/decisions/0099-tables-and-scripts.md`). A new panel names its dock in `PANELS` (`app/src/workspace/Workspace.tsx`) and opens
 through `showPanel`; it never adds a column or a row of its own, and the view keeps its room. The view has no tab strip,
 and its own tools (Select, Draw, Measure, Snap, 3D or Plan, perspective or orthographic (P), the zooms, the field of view, Section and its step and fill)

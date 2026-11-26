@@ -1,25 +1,29 @@
-import { ArrowDown, ArrowUp, RotateCw, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, X } from 'lucide-react';
 import { type ReactNode, useEffect, useState } from 'react';
-import { type FieldSource, reservesRerunParams, type SetupView, type TableSetup, tableSetupView } from '@/bridge';
+import { type FieldSource, type SetupView, type TableSetup, tableSetupView } from '@/bridge';
 import { CellInput, FilterInput, IconButton, Select } from '@/design-system/kit';
 import { Button } from '@/design-system/ui/button';
 import { cn } from 'cn';
 import { useWorkspace } from '@/workspace/context';
+import { countWords, foldsNames } from './reservesCase';
 
 /**
  * A case's setup (Table setup plan, decision 5; in the Reserves case tab since the Reserves case plan's workstream 7,
  * which took the Setup tab out): what fills the case's reserves table, opened from the band's Setup. What it's run on (its
  * blocks by layer and filter, its seam model or stack), its dataflow and add-ons in order, the dataflows after it with the
  * rows each runs on, the steps they run, each field and where it comes from (the table's own marked), its parameter tables
- * in the order read with what it reads from each, and Run again. Every edit is `table.setup`: the table's next revision,
- * one undo. A table made before setups shows the one its run gives, and takes it as its own on the first edit.
+ * in the order read with what it reads from each. Every edit is `table.setup`: the table's next revision, one undo. A
+ * table made before setups shows the one its run gives, and takes it as its own on the first edit.
+ *
+ * Its own view (Case setup and unit plan, decisions 1 to 4): it takes the working area under the header, framed, with
+ * Done back to the case; it has no Run of its own, an edit putting the case out of date for Run to run; it reads top
+ * down in the order a run uses it, each section saying what it decides; a long list of names folds to a count.
  */
-export function CaseSetup({ table }: { table: string }) {
+export function CaseSetup({ table, onDone }: { table: string; onDone: () => void }) {
   const { summary, runRecord, openTool } = useWorkspace();
   const [view, setView] = useState<SetupView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [said, setSaid] = useState<{ text: string; refused: boolean } | null>(null);
-  const [running, setRunning] = useState(false);
   // Anything it names may change its view: the table, its dataflows, its parameter tables, a layer's blocks.
   const changed = (summary?.objects ?? []).map((o) => `${o.id}:${o.revision}`).join(',');
   useEffect(() => {
@@ -37,39 +41,36 @@ export function CaseSetup({ table }: { table: string }) {
     const next: TableSetup = structuredClone(view.setup);
     edit(next);
     const reply = await runRecord('table.setup', { table: view.table.id, setup: next });
-    setSaid(reply.error ? { text: reply.error, refused: true } : { text: `${what}: saved as ${view.table.name}'s next revision.`, refused: false });
-  };
-  const runAgain = async () => {
-    if (!view) return;
-    setRunning(true);
-    try {
-      const reply = await runRecord('reserves.run', await reservesRerunParams(view.table.id, []));
-      setSaid(reply.error ? { text: reply.error, refused: true } : { text: `${view.table.name} run again from its setup.`, refused: false });
-    } catch (e) {
-      setSaid({ text: String(e), refused: true });
-    } finally {
-      setRunning(false);
-    }
+    setSaid(
+      reply.error
+        ? { text: reply.error, refused: true }
+        : { text: `${what}: saved as ${view.table.name}'s next revision. The case is out of date until it's run from Run.`, refused: false },
+    );
   };
 
   return (
-    <div className="flex min-h-0 flex-col border-b border-border text-xs" data-slot="setup">
-      <div className="flex h-8 shrink-0 items-center gap-2 px-2">
-        <span className="font-semibold">Setup</span>
-        <span className="text-muted-foreground">what fills {view?.table.name ?? 'the case'}; each edit its next revision</span>
-        <Button size="sm" variant="outline" className="h-6 px-2 text-xs" disabled={running || !view} onClick={() => void runAgain()} title="Run every block of the table again from this setup, into the table: its next revision, one undo">
-          <RotateCw className={cn('size-3.5', running && 'animate-spin')} /> {running ? 'Running…' : 'Run again'}
+    <div className="flex min-h-[20rem] flex-1 flex-col text-xs" data-slot="setup">
+      {/* The frame (decision 1): what this is, and the way back. */}
+      <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-border bg-muted/40 px-3 py-2" data-slot="setup-title">
+        <span className="text-sm font-semibold">Setup of {view?.table.name ?? 'the case'}</span>
+        <span className="text-muted-foreground">What fills this case. Each change saves as the table's next revision, and the case runs from Run.</span>
+        <Button size="sm" className="ml-auto h-6 px-3" onClick={onDone} data-slot="setup-done" title="Back to the case, on the same step and block (Esc)">
+          Done
         </Button>
-        {view && !view.held && <span className="text-warning">From the run that made it: saved as its own on the first edit.</span>}
-        {said && (
-          <span className={cn('min-w-0 truncate', said.refused ? 'text-destructive' : 'text-muted-foreground')} title={said.text} data-slot="setup-said">
-            {said.text}
-          </span>
-        )}
       </div>
-      {error && <p className="px-2 py-1 text-destructive">{error}</p>}
+      {(view && !view.held) || said || error ? (
+        <div className="shrink-0 space-y-0.5 border-b border-border px-3 py-1">
+          {view && !view.held && <div className="text-warning">From the run that made it: saved as the table's own on the first change.</div>}
+          {said && (
+            <div className={said.refused ? 'text-destructive' : 'text-muted-foreground'} data-slot="setup-said">
+              {said.text}
+            </div>
+          )}
+          {error && <div className="text-destructive">{error}</div>}
+        </div>
+      ) : null}
       {view && (
-        <div className="max-h-[32rem] min-h-0 overflow-auto">
+        <div className="min-h-0 flex-1 overflow-auto">
           {view.problems.length > 0 && (
             <ul className="space-y-0.5 border-b px-3 py-2 text-destructive" data-slot="setup-problems">
               {view.problems.map((p) => (
@@ -77,7 +78,8 @@ export function CaseSetup({ table }: { table: string }) {
               ))}
             </ul>
           )}
-          <div className="grid gap-x-6 gap-y-3 p-3 lg:grid-cols-2">
+          {/* Top down in the order a run uses it (decision 3). */}
+          <div className="max-w-[70rem] space-y-5 p-3">
             <RunOn view={view} save={save} />
             <Dataflows view={view} save={save} />
             <RowDataflows view={view} save={save} />
@@ -100,7 +102,7 @@ function RowDataflows({ view, save }: { view: SetupView; save: Save }) {
   const rows = view.setup.row_dataflows ?? [];
   const nameOf = (id: string) => (summary?.objects ?? []).find((o) => o.id === id)?.name ?? 'a dataflow since deleted';
   return (
-    <Section title="Dataflows after it, in run order" slot="setup-row-dataflows">
+    <Section n={3} title="Dataflows after it, in run order" line="Dataflows run on the table's rows after the reserves run, each on the rows its filter picks; taken out, its columns stay on the table." slot="setup-row-dataflows">
       {rows.length === 0 && <div className="text-muted-foreground">None: Add a dataflow, beside the cases, puts one here.</div>}
       <Ordered
         items={rows}
@@ -132,12 +134,42 @@ function RowDataflows({ view, save }: { view: SetupView; save: Save }) {
 
 type Save = (edit: (s: TableSetup) => void, what: string) => Promise<void>;
 
-function Section({ title, children, slot, wide }: { title: string; children: ReactNode; slot: string; wide?: boolean }) {
+/** A section of the setup: numbered in the order a run uses it, with a line saying what it decides (decision 3). */
+function Section({ n, title, line, children, slot }: { n: number; title: string; line: string; children: ReactNode; slot: string }) {
   return (
-    <section className={cn('min-w-0 space-y-1', wide && 'lg:col-span-2')} data-slot={slot}>
-      <div className="font-semibold">{title}</div>
-      {children}
+    <section className="min-w-0 space-y-1" data-slot={slot} data-section={n}>
+      <div className="flex items-baseline gap-2 border-b border-border/60 pb-0.5">
+        <span className="w-4 shrink-0 text-right font-semibold text-muted-foreground tabular-nums">{n}</span>
+        <span className="text-[13px] font-semibold">{title}</span>
+      </div>
+      <div className="pl-6 text-muted-foreground" data-slot="setup-line">
+        {line}
+      </div>
+      <div className="space-y-1 pl-6">{children}</div>
     </section>
+  );
+}
+
+/** Names, folded to a count past twelve and opened on a click (decision 4). */
+function Names({ names, noun, lead }: { names: string[]; noun: string; lead: string }) {
+  const [open, setOpen] = useState(false);
+  if (!foldsNames(names.length)) return <span>{`${lead} ${names.join(', ')}`}</span>;
+  return (
+    <span data-slot="setup-names" data-count={names.length}>
+      <button type="button" className="inline-flex items-center gap-0.5 hover:text-foreground" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+        {open ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
+        {lead} {countWords(names.length, noun)}
+      </button>
+      {open && (
+        <span className="mt-0.5 block columns-[12rem] gap-x-4" data-slot="setup-names-open">
+          {names.map((n) => (
+            <span key={n} className="block truncate font-mono text-[11px]" title={n}>
+              {n}
+            </span>
+          ))}
+        </span>
+      )}
+    </span>
   );
 }
 
@@ -208,7 +240,7 @@ function RunOn({ view, save }: { view: SetupView; save: Save }) {
   const [newAttribute, setNewAttribute] = useState('');
   const fromTable = !!view.setup.input;
   return (
-    <Section title="Run on" slot="setup-run-on">
+    <Section n={1} title="Blocks it runs on" line="Which block solids fill the case, and the seam order they're read in. A block added to a picked layer is taken up at the next run." slot="setup-run-on">
       <div className="flex items-center gap-2">
         <Select
           className="h-6 w-56"
@@ -416,7 +448,7 @@ function Dataflows({ view, save }: { view: SetupView; save: Save }) {
   );
   const setAddOns = (next: string[], what: string) => void save((s) => (s.add_ons = next), what);
   return (
-    <Section title="Dataflows" slot="setup-dataflows">
+    <Section n={2} title="The dataflow and its add-ons" line="The steps that work each block column: the main dataflow's, then each add-on's at its stage." slot="setup-dataflows">
       <div className="flex items-center gap-2">
         <span className="text-muted-foreground">Main</span>
         <Select className="h-6 w-56" aria-label="Main dataflow" value={view.dataflow.id} onChange={(e) => void save((s) => (s.dataflow = e.target.value), 'Dataflow')}>
@@ -462,14 +494,19 @@ function ParameterTables({ view, save, open }: { view: SetupView; save: Save; op
       </button>{' '}
       <span className="text-muted-foreground">r{t.revision}</span>
       <div className="text-muted-foreground" data-slot="setup-table-reads">
-        {t.read.length ? `Reads ${t.read.join(', ')}` : 'Nothing read from it here'}
-        {t.unread.length > 0 && <span className="text-warning"> · not named here: {t.unread.join(', ')}</span>}
+        {t.read.length ? <Names names={t.read} noun="setting" lead="Reads" /> : 'Nothing read from it here'}
+        {t.unread.length > 0 && (
+          <span className="text-warning">
+            {' · '}
+            <Names names={t.unread} noun="column" lead="not named here:" />
+          </span>
+        )}
         {t.shadowed.length > 0 && <span> · given first by an earlier table: {t.shadowed.map(([c, by]) => `${c} (${by})`).join(', ')}</span>}
       </div>
     </div>
   );
   return (
-    <Section title="Parameter tables" slot="setup-tables" wide>
+    <Section n={4} title="Settings tables, in the order read" line="Where the steps' settings come from: each value from the first table that gives it. A name opens its table in the Parameters tab." slot="setup-tables">
       <div className="text-muted-foreground">Read in this order, each value from the first that gives it{view.own_rows > 0 ? ', after the rows of its own' : ''}:</div>
       <Ordered items={listed} label={(t) => t.name} render={row} onChange={(next) => setTables(next.map((t) => t.id), 'Parameter tables')} />
       {after.length > 0 && (
@@ -494,7 +531,7 @@ function ParameterTables({ view, save, open }: { view: SetupView; save: Save; op
       </div>
       {view.looked_up.length > 0 && (
         <div className="text-muted-foreground" data-slot="setup-looked-up">
-          Looked up by name in its scripts: {view.looked_up.map((t) => t.name).join(', ')}.
+          <Names names={view.looked_up.map((t) => t.name)} noun="table" lead="Looked up by name in its scripts:" />
         </div>
       )}
     </Section>
@@ -505,7 +542,7 @@ function Steps({ view, edit }: { view: SetupView; edit: (flow: string, step: str
   const flowId = (from: string) => (from === view.dataflow.name ? view.dataflow.id : view.add_ons.find((a) => a.name === from)?.id);
   const scripts = view.steps.filter((s) => s.kind === 'table script');
   return (
-    <Section title="Steps, in the order run" slot="setup-steps">
+    <Section n={5} title="Steps, in the order run" line="Every step the case runs, from the dataflow and its add-ons. A formula opens in the Parameters tab to edit." slot="setup-steps">
       <ol className="space-y-0.5">
         {view.steps.map((s, i) => {
           const id = flowId(s.from);
@@ -531,7 +568,7 @@ function Steps({ view, edit }: { view: SetupView; edit: (flow: string, step: str
       {(scripts.length > 0 || view.calculated.length > 0) && (
         <div className="text-muted-foreground" data-slot="setup-scripts">
           {scripts.length > 0 && `Table scripts after final: ${scripts.map((s) => s.step).join(', ')}. `}
-          {view.calculated.length > 0 && `Calculated columns: ${view.calculated.join(', ')}.`}
+          {view.calculated.length > 0 && <Names names={view.calculated} noun="column" lead="Calculated columns:" />}
         </div>
       )}
     </Section>
@@ -556,8 +593,11 @@ export function sourceWords(s: FieldSource): string {
 
 function Fields({ view, save }: { view: SetupView; save: Save }) {
   const [find, setFind] = useState('');
-  const shown = view.fields.filter((f) => !find || f.name.toLowerCase().includes(find.toLowerCase()));
+  const [all, setAll] = useState(false);
   const own = view.fields.filter((f) => f.own).length;
+  // Past twelve, the table's own fields and those found show; the rest on a click (decision 4).
+  const folded = !find && !all && foldsNames(view.fields.length);
+  const shown = view.fields.filter((f) => (find ? f.name.toLowerCase().includes(find.toLowerCase()) : !folded || f.own));
   const set = (name: string, source: FieldSource | null) =>
     void save((s) => {
       const next = { ...(s.sources ?? {}) };
@@ -573,12 +613,18 @@ function Fields({ view, save }: { view: SetupView; save: Save }) {
     set(name, { from: k } as FieldSource);
   };
   return (
-    <Section title="Fields and where each comes from" slot="setup-fields" wide>
+    <Section n={6} title="Fields and where each comes from" line="Each column of the table and what fills it: the solid, a block attribute, a parameter column or a step. A change makes it the table's own." slot="setup-fields">
       <div className="flex items-center gap-2">
         <CellInput className="w-48 border-input" value={find} label="Find a field" placeholder="Find a field…" onChange={setFind} />
         <span className="text-muted-foreground">
           {view.fields.length} fields, {own} the table's own.
         </span>
+        {!find && foldsNames(view.fields.length) && (
+          <button type="button" className="inline-flex items-center gap-0.5 text-muted-foreground hover:text-foreground" onClick={() => setAll((a) => !a)} aria-expanded={all} data-slot="setup-fields-all">
+            {all ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
+            {all ? "Only the table's own" : `Every field (${view.fields.length})`}
+          </button>
+        )}
       </div>
       <div className="grid grid-cols-[minmax(8rem,auto)_minmax(10rem,1fr)_auto_minmax(8rem,1fr)] items-center gap-x-2 gap-y-0.5">
         {shown.map((f) => {

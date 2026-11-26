@@ -429,7 +429,53 @@ export async function checkCase(path: string, log: (line: string) => void, show:
   }, 15_000);
   expect("the case's Setup lists its dataflows after the reserves one, in run order", JSON.stringify(afterIt) === JSON.stringify(['Check haulage', 'Check added']), afterIt);
   await picture?.('case-way-in');
+
+  // The Setup as its own view (Case setup and unit plan, decisions 1 to 4).
+  const setupBox = document.querySelector<HTMLElement>('[data-tool-panel="case"] [data-slot="setup"]');
+  const inPanel = (slot: string) => !!document.querySelector(`[data-tool-panel="case"] [data-slot="${slot}"]`);
+  expect(
+    'the Setup is its own view: framed with Done, the flow, the working area and the row dataflow out of sight',
+    !!setupBox && inPanel('setup-title') && inPanel('setup-done') && !inPanel('case-flow') && !inPanel('case-columns') && !inPanel('row-dataflow'),
+    { title: inPanel('setup-title'), flow: inPanel('case-flow'), columns: inPanel('case-columns'), row: inPanel('row-dataflow') },
+  );
+  const setupRuns = [...(setupBox?.querySelectorAll('button') ?? [])].map((b) => b.textContent?.trim() ?? '').filter((t) => /\bRun\b/.test(t));
+  expect('the Setup has no Run of its own', setupRuns.length === 0, setupRuns);
+  const sections = [...(setupBox?.querySelectorAll<HTMLElement>('[data-section]') ?? [])];
+  const numbered = sections.map((e) => Number(e.dataset.section));
+  expect(
+    "the Setup's sections go 1 to 6 in the order a run uses them, each saying what it decides",
+    JSON.stringify(numbered) === '[1,2,3,4,5,6]' && sections.every((e) => (e.querySelector('[data-slot="setup-line"]')?.textContent ?? '').length > 20),
+    numbered,
+  );
+  // A settings table read for more than twelve settings folds to its count, opened on a click.
+  const folds = [...(setupBox?.querySelectorAll<HTMLElement>('[data-slot="setup-tables"] [data-slot="setup-names"]') ?? [])];
+  const fold = folds[0];
+  const count = Number(fold?.dataset.count ?? 0);
+  fold?.querySelector('button')?.click();
+  const namesOpen = await until(() => fold?.querySelector('[data-slot="setup-names-open"]'), 3_000);
+  const namesListed = namesOpen?.querySelectorAll('span').length ?? 0;
+  expect('a settings table read for more than 12 settings folds to its count, the names on a click', !!fold && count > 12 && (fold.textContent ?? '').includes(`${count} settings`) && namesListed === count, { count, listed: namesListed });
+  // One place to run the whole case: the reserves dataflow's Run in Run ▾ is every block again; the map keeps its parts.
+  document.querySelector<HTMLElement>('[data-tool-panel="case"] [data-slot="case-switch"]')?.click();
+  const everyBlock = await until(() => {
+    const row = [...document.querySelectorAll<HTMLElement>('[data-slot="case-dataflow-row"]')][0];
+    return row?.querySelector('[data-slot="case-run-one"]')?.textContent?.includes('Every block again') ? row : null;
+  }, 5_000);
+  expect("Run's reserves dataflow runs every block again", !!everyBlock);
+  await picture?.('case-setup-view');
+  document.querySelector<HTMLElement>('[data-tool-panel="case"] [data-slot="case-switch"]')?.click();
+  // Done: back to the case as it was, the row dataflow open as before.
+  document.querySelector<HTMLElement>('[data-slot="setup-done"]')?.click();
+  const back = await until(() => !inPanel('setup') && inPanel('row-dataflow'), 5_000);
+  expect('Done leaves the Setup for the case as it was', !!back);
+  // Esc does the same.
   document.querySelector<HTMLElement>('[data-slot="case-setup"]')?.click();
+  await until(() => inPanel('setup-title'), 5_000);
+  const doneButton = document.querySelector<HTMLElement>('[data-slot="setup-done"]');
+  doneButton?.focus();
+  doneButton?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  const escaped = await until(() => !inPanel('setup') && inPanel('row-dataflow'), 5_000);
+  expect('Esc leaves the Setup too', !!escaped);
 
   // New case: every block on the Base table's layer, the demo's reserves dataflow.
   await fromMore('case-new');
