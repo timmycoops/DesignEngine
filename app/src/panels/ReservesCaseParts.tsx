@@ -24,7 +24,9 @@ export function BlockMap({ blocks, picked, onPick }: { blocks: ColumnDid[]; pick
   const words = measure === 'moved' ? 'volume this step moved' : measure === 'written' ? 'volume this step wrote' : 'nothing moved by this step';
   return (
     <div className="space-y-1" data-slot="block-map">
-      <div className="text-muted-foreground">Blocks · shaded by {words} · click to pick</div>
+      <div className="text-muted-foreground" title={`Shaded by ${words}. Click a block to pick it.`}>
+        Blocks
+      </div>
       <div className="max-h-40 space-y-0.5 overflow-auto">
         {rows.map((row) => (
           <div key={row.strip} className="flex items-center gap-1">
