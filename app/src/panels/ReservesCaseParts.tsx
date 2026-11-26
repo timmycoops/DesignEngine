@@ -3,7 +3,7 @@ import type { ColumnDid, ColumnField, ColumnUnit, StepTotals } from '@/bridge';
 import { CellInput } from '@/design-system/kit';
 import { cn } from 'cn';
 import { unitWords, valueText } from './columnSteps';
-import { blockMap, type CaseRow, caseRows, changeWords, mapMeasure, type SettingsGrid, shadeOf } from './reservesCase';
+import { blockMap, type CaseRow, caseRows, changeWords, mapColumns, mapMeasure, type SettingsGrid, shadeOf } from './reservesCase';
 
 /**
  * The Reserves case tab's parts (Reserves case plan, decisions 8 and 11): the block map, a block's strip log before and
@@ -18,6 +18,7 @@ const figure = (v: number, unit: string) => `${Math.round(v).toLocaleString('en-
  */
 export function BlockMap({ blocks, picked, onPick }: { blocks: ColumnDid[]; picked: string[] | null; onPick: (path: string[]) => void }) {
   const rows = blockMap(blocks);
+  const across = mapColumns(rows);
   const measure = mapMeasure(blocks);
   const key = (p: string[]) => p.join('\u0001');
   const pickedKey = picked ? key(picked) : null;
@@ -27,13 +28,13 @@ export function BlockMap({ blocks, picked, onPick }: { blocks: ColumnDid[]; pick
       <div className="text-muted-foreground" title={`Shaded by ${words}. Click a block to pick it.`}>
         Blocks
       </div>
-      <div className="max-h-40 space-y-0.5 overflow-auto">
+      <div className="space-y-0.5 overflow-x-auto">
         {rows.map((row) => (
           <div key={row.strip} className="flex items-center gap-1">
             <span className="w-16 shrink-0 truncate text-right text-muted-foreground tabular-nums" title={row.strip}>
               {row.strip}
             </span>
-            <div className="flex flex-wrap gap-0.5">
+            <div className={across ? 'grid flex-1 gap-0.5' : 'flex flex-wrap gap-0.5'} style={across ? { gridTemplateColumns: `repeat(${across}, minmax(1rem, 1.75rem))` } : undefined}>
               {row.blocks.map((b) => {
                 const shade = shadeOf(b, blocks, measure);
                 const name = b.path[b.path.length - 1] ?? '';
@@ -51,7 +52,8 @@ export function BlockMap({ blocks, picked, onPick }: { blocks: ColumnDid[]; pick
                     data-picked={pickedKey === key(b.path) ? 'yes' : 'no'}
                     onClick={() => onPick(b.path)}
                     className={cn(
-                      'relative size-4 rounded-[2px] border border-border bg-muted',
+                      'relative rounded-[2px] border border-border bg-muted',
+                      across ? 'aspect-square w-full' : 'size-4',
                       pickedKey === key(b.path) && 'ring-2 ring-primary',
                       b.stopped && 'bg-destructive/30',
                     )}
@@ -179,7 +181,7 @@ export function SettingsBySeam({
   if (grid.rows.length === 0) return <div className="text-muted-foreground">No table this case reads holds {grid.columns.join(', ')}.</div>;
   return (
     <div className="overflow-x-auto" data-slot="settings-by-seam">
-      <table className="w-full border-collapse">
+      <table className="w-auto border-collapse">
         <thead>
           <tr className="text-muted-foreground">
             <th className="px-1 text-left font-normal">Row</th>

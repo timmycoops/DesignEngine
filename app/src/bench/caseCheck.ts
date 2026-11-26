@@ -119,13 +119,10 @@ export async function checkCase(path: string, log: (line: string) => void, show:
   expect('at final, ROM coal 9,234,489 t', (rom?.[1] ?? '').includes('9,234,489'), rom);
   await picture?.('case-final');
 
-  // A picture leaves out scroll positions (windowPicture): the step view out of the way for a moment, so the units
-  // table under it is in the picture.
+  // The units table has its own column filling the height (Case tab layout plan, decision 6), so it's in the picture
+  // as it stands.
   const unitsPicture = async (name: string) => {
-    const above = document.querySelector<HTMLElement>('[data-slot="case-columns"]');
-    if (above) above.style.display = 'none';
     await picture?.(name);
-    if (above) above.style.display = '';
   };
   // The units table (decision 12, workstream 5): B5 at rom_loss, its U's pieces adding to what U was, the groups'
   // subtotals the block's, the pieces that left listed red, a field set kept and taken away, a piece's journey.
@@ -137,6 +134,68 @@ export async function checkCase(path: string, log: (line: string) => void, show:
     return head.includes('Pit / 3 / B5 before and after rom_loss') && document.querySelectorAll('[data-slot="units-row"]').length > 0 ? head : null;
   }, 20_000);
   expect('the units table shows B5 before and after rom_loss', !!table);
+
+  // The working area by the dock's width (Case tab layout plan, decisions 6 and 8): the tab given the window, then
+  // narrowed to 1,399 and 999 px. Step, units table and block map side by side to the foot; under 1,400 the block map
+  // under the step; under 1,000 the units table under both and the header's figures in the pill's tip.
+  const caseTab = document.querySelector<HTMLElement>('[data-tool-panel="case"]');
+  const casePanel = api.getPanel('case');
+  if (casePanel && !api.hasMaximizedGroup()) api.maximizeGroup(casePanel);
+  const boxOf = (slot: string) => {
+    const r = document.querySelector<HTMLElement>(`[data-tool-panel="case"] [data-slot="${slot}"]`)?.getBoundingClientRect();
+    return r ? { left: Math.round(r.left), top: Math.round(r.top), right: Math.round(r.right), bottom: Math.round(r.bottom) } : null;
+  };
+  const layoutAt = async (px: number | null) => {
+    if (caseTab) caseTab.style.width = px === null ? '' : `${px}px`;
+    await wait(400);
+    const units = boxOf('case-units');
+    const inSight = [...document.querySelectorAll<HTMLElement>('[data-slot="units-row"]')].filter((r) => {
+      const b = r.getBoundingClientRect();
+      return units && b.top >= units.top && b.bottom <= units.bottom;
+    }).length;
+    return {
+      width: caseTab?.clientWidth ?? 0,
+      height: caseTab?.clientHeight ?? 0,
+      fold: document.querySelector<HTMLElement>('[data-slot="case-columns"]')?.dataset.fold,
+      step: boxOf('case-step-pane'),
+      units,
+      blocks: boxOf('case-blocks'),
+      tab: caseTab ? { bottom: Math.round(caseTab.getBoundingClientRect().bottom) } : null,
+      figures: !!document.querySelector('[data-tool-panel="case"] [data-slot="case-figures"]'),
+      rows_in_sight: inSight,
+      // Anything on the flow cut off: wider than its box, or ending in an ellipsis (the plan's "nothing cut off").
+      cut: [...document.querySelectorAll<HTMLElement>('[data-tool-panel="case"] [data-slot="flow-stage"] *')]
+        .filter((e) => e.children.length === 0 && (e.scrollWidth > e.clientWidth + 1 || (e.textContent ?? '').trim().endsWith('…')))
+        .map((e) => e.textContent ?? ''),
+    };
+  };
+  const wide = await layoutAt(null);
+  expect(
+    'wide, step | units table | block map side by side, filling the height',
+    wide.fold === 'three' && !!wide.step && !!wide.units && !!wide.blocks && wide.step.right <= wide.units.left + 1 && wide.units.right <= wide.blocks.left + 1 && wide.step.top === wide.units.top && wide.units.top === wide.blocks.top && Math.abs((wide.units.bottom ?? 0) - (wide.tab?.bottom ?? 0)) <= 2 && wide.figures,
+    wide,
+  );
+  expect('wide, nothing on the flow cut off', wide.cut.length === 0, wide.cut);
+  expect('wide, the units table shows at least 10 rows', wide.rows_in_sight >= 10, { rows_in_sight: wide.rows_in_sight, height: wide.height });
+  await picture?.('case-wide');
+  const middle = await layoutAt(1399);
+  expect(
+    'under 1,400 px, the block map under the step, the units table beside both',
+    middle.fold === 'two' && !!middle.step && !!middle.blocks && !!middle.units && middle.blocks.top >= middle.step.bottom - 1 && middle.blocks.left === middle.step.left && middle.units.left >= middle.step.right - 1 && middle.figures,
+    middle,
+  );
+  expect('under 1,400 px, nothing on the flow cut off', middle.cut.length === 0, middle.cut);
+  await picture?.('case-1399');
+  const narrow = await layoutAt(999);
+  expect(
+    "under 1,000 px, the units table under both and the figures in the pill's tip",
+    narrow.fold === 'one' && !!narrow.step && !!narrow.blocks && !!narrow.units && narrow.blocks.top >= narrow.step.bottom - 1 && narrow.units.top >= narrow.blocks.bottom - 1 && !narrow.figures,
+    narrow,
+  );
+  await picture?.('case-999');
+  await layoutAt(null);
+  if (api.hasMaximizedGroup()) api.exitMaximizedGroup();
+  await wait(300);
   const rows = [...document.querySelectorAll<HTMLElement>('[data-slot="units-row"]')];
   const num = (e: HTMLElement, key: string) => (e.dataset[key] ? Number(e.dataset[key]) : 0);
   const kept = rows.find((r) => r.dataset.horizon === 'U' && r.dataset.left === 'no' && r.dataset.volumeBefore);

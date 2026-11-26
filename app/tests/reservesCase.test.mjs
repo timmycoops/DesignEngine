@@ -2,7 +2,7 @@
 // against the last run, and a step's settings by seam and ply, on made-up steps and blocks. Run with `pnpm test`.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { blockMap, caseRows, changeWords, mapMeasure, scriptSettings, settingsGrid, shadeOf, stagesOf, stepSettings, suppliedFor, withCell } from '../src/panels/reservesCase.ts';
+import { blockMap, caseFold, caseRows, changeWords, mapColumns, mapMeasure, scriptSettings, settingsGrid, shadeOf, stagesOf, stepSettings, suppliedFor, withCell } from '../src/panels/reservesCase.ts';
 
 const s = (step, kind = 'built_in', dataflow) => ({ step, kind, ...(dataflow ? { dataflow } : {}) });
 
@@ -121,4 +121,21 @@ test('a cell typed sets a number, cleared passes on, a new column added; words s
   assert.deepEqual(added.columns.map((c) => c.name), ['roof_loss', 'ws_split', 'edge_loss']);
   assert.deepEqual(added.rows[0].values, { roof_loss: 0.1, edge_loss: 0.05 });
   assert.deepEqual(t.rows[0].values, { roof_loss: 0.1 }, 'the table given is left as it was');
+});
+
+test('the working area folds by the dock width: three columns from 1,400 px, two from 1,000, one under it (Case tab layout plan, decision 8)', () => {
+  assert.equal(caseFold(2000), 'three');
+  assert.equal(caseFold(1400), 'three');
+  assert.equal(caseFold(1399), 'two');
+  assert.equal(caseFold(1000), 'two');
+  assert.equal(caseFold(999), 'one');
+  assert.equal(caseFold(0), 'one');
+});
+
+test("the block map's cells line up a column a block of the longest strip, and wrap past 40 (decision 6)", () => {
+  const strip = (n) => ({ strip: 'S', blocks: Array.from({ length: n }, () => ({})) });
+  assert.equal(mapColumns([strip(3), strip(7), strip(5)]), 7);
+  assert.equal(mapColumns([strip(40)]), 40);
+  assert.equal(mapColumns([strip(41), strip(2)]), null);
+  assert.equal(mapColumns([]), null);
 });

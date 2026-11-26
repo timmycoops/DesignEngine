@@ -1,5 +1,5 @@
 import { Braces, RotateCw, Save, Settings2, Undo2 } from 'lucide-react';
-import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { type CaseState, caseState, type CaseStepView, type ColumnSteps, type ColumnUnit, type DataflowState, objectDetails, type ParameterTable, reservesCaseStep, reservesColumn, reservesColumnTrace, reservesRerunParams } from '@/bridge';
 import { PanelHead, StatusBadge } from '@/design-system/kit';
 import { Button } from '@/design-system/ui/button';
@@ -17,7 +17,7 @@ import { CaseSwitcher, DataflowChain } from './CaseSwitcher';
 import { BlockMap, SettingsBySeam, StripLog, WholeCase } from './ReservesCaseParts';
 import { RowDataflowView } from './RowDataflowView';
 import { UnitsTable } from './UnitsTable';
-import { mapMeasure, settingsGrid, shadeOf, stagesOf, stepSettings, suppliedFor, withCell } from './reservesCase';
+import { type CaseFold, caseFold, mapMeasure, settingsGrid, shadeOf, stagesOf, stepSettings, suppliedFor, withCell } from './reservesCase';
 
 /**
  * The Reserves case tab (the Build Plan's "Reserves case plan", decisions 8, 9 and 11, workstream 4; laid out by the
@@ -87,6 +87,7 @@ export function ReservesCasePanel() {
   const [unitOpen, setUnitOpen] = useState(false);
   const [rerunning, setRerunning] = useState(false);
   const cases = useCases();
+  const [foldRef, fold] = useCaseFold();
 
   // A new table starts again: its first step that does something, its busiest block.
   useEffect(() => {
@@ -374,8 +375,152 @@ export function ReservesCasePanel() {
   // The open case's own tip on its pill (decision 4 and 7): its blocks, seam model and steps, said once.
   const caseMore = column && shown ? `${shown.columns} block columns · ${column.model ?? "the run's own seam stack"}, ${column.horizons} horizons · ${shown.steps.length} steps` : '';
 
+  // The step (decisions 8, 9 and 11).
+  const stepPane = view && (
+    <div className={cn('space-y-2 p-2', fold === 'three' && 'min-h-0 overflow-auto')} data-slot="case-step-pane">
+      {cell && at !== null && shown && (
+        <>
+          <div className="flex flex-wrap items-baseline gap-x-2">
+            <span className="text-sm font-semibold">
+              {at} · {stepLabel(cell.step)}
+            </span>
+            <span className="text-muted-foreground">{kindWords[cell.kind]}</span>
+            {edits && (
+              <StatusBadge tone="edited" title="The case is run on unsaved edits">
+                run on edits
+              </StatusBadge>
+            )}
+          </div>
+          <div data-slot="case-rule" className={cn(cell.kind === 'built_in' && 'truncate')} title={cell.kind === 'built_in' ? cell.rule : undefined}>
+            {cell.kind === 'built_in' ? (
+              cell.rule
+            ) : (
+              <button type="button" className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground hover:underline" onClick={() => openTool('params', `formula:${cell.dataflow ?? column!.dataflow_id}:${cell.step}`)}>
+                <Braces className="size-3" /> Open its script in the formula panel
+              </button>
+            )}
+          </div>
+          <div className="grid grid-cols-[3.5rem_1fr] gap-x-2 gap-y-0.5">
+            <span className="text-muted-foreground">Reads</span>
+            <span>
+              {[...cell.fields_read, ...settingsRead].length === 0 && <span className="text-muted-foreground">nothing it names</span>}
+              {cell.fields_read.map((f) => (
+                <Chip key={`f${f}`}>{f}</Chip>
+              ))}
+              {settingsRead.map((f) => (
+                <Chip key={`s${f}`} lit>
+                  {f}
+                </Chip>
+              ))}
+              {/* The settings tables it reads them from (Case tab layout plan, decision 4: the input cards' place). */}
+              {readsTable.size > 0 && <span className="mr-1 text-muted-foreground">from</span>}
+              {column &&
+                column.tables.map((name, t) => {
+                  if (!readsTable.has(t)) return null;
+                  const id = column.table_ids[t];
+                  const editedHere = !!id && drafts[id]?.kind === 'table';
+                  return (
+                    <button
+                      key={`t${t}`}
+                      type="button"
+                      className={cn('mr-1 mb-0.5 inline-block rounded border border-primary bg-selection px-1 text-[11px] hover:underline', editedHere ? 'text-edited' : 'text-primary')}
+                      title={`${name}: a settings table this step reads${editedHere ? ', run as edited' : ''}. Open it in the Parameters tab`}
+                      onClick={() => id && openTool('params', `show:${id}`)}
+                      data-slot="case-reads-table"
+                    >
+                      {name}
+                    </button>
+                  );
+                })}
+            </span>
+            <span className="text-muted-foreground">Writes</span>
+            <span>
+              {writes.length === 0 ? <span className="text-muted-foreground">nothing to the table</span> : writes.flatMap((w) => w.parts).map((w) => <Chip key={w.folder}>{w.folder}</Chip>)}
+            </span>
+          </div>
+          {/* The whole case first, so it's in sight as a setting is typed under it. */}
+          <section className="space-y-1">
+            <div className="text-muted-foreground">Whole case at this step · every block{view.now?.ran_from ? ` · ran again from step ${view.now.ran_from}` : ''}</div>
+            <WholeCase saved={view.saved} now={view.now} />
+          </section>
+          <section className="space-y-1">
+            <div className="text-muted-foreground" title={`The rows read in order: the first that fits and holds a setting gives it. Ringed: what ${into ? unitWords(into) : 'the unit followed'} used.`}>
+              Settings by seam and ply
+            </div>
+            {grid && <SettingsBySeam grid={grid} supplied={supplied} edited={editedCells} onSet={setCell} />}
+          </section>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" className="h-7" disabled={!edits || edits.tables.length === 0 || saving || !!edits.why} onClick={() => void saveAndRun()} title="Save the settings tables as typed, then run the case again from its setup: each its next revision, one undo each">
+              <Save className="size-3.5" /> {saving ? 'Saving…' : 'Save and run the case'}
+            </Button>
+            {edits && edits.tables.length > 0 && (
+              <Button size="sm" variant="outline" className="h-7" onClick={discard} title="Put the settings back as saved">
+                <Undo2 className="size-3.5" /> Discard
+              </Button>
+            )}
+            <span className={cn(edits ? 'text-edited' : 'text-muted-foreground')}>{edits ? 'Unsaved: the whole case runs again as you type.' : 'Type a setting to see the whole case run again.'}</span>
+            {edits?.dataflow && <span className="text-muted-foreground">The dataflow's own edits save in the Parameters tab.</span>}
+          </div>
+          {said && <div className={said.refused ? 'text-destructive' : 'text-ok'}>{said.text}</div>}
+          <section className="border-t border-border pt-1" data-slot="case-unit-by-unit">
+            <button type="button" className="text-muted-foreground hover:text-foreground hover:underline" onClick={() => setUnitOpen((o) => !o)}>
+              {unitOpen ? '▾' : '▸'} This step unit by unit: {into ? unitWords(into) : 'the unit followed'}'s workings{cell.kind === 'formula' ? ' and its formula traced' : ''}
+            </button>
+            {unitOpen && column && (
+              <StepPane
+                column={column}
+                at={at}
+                summary={summaries[at]}
+                focus={into ? focusOf(into) : null}
+                trace={trace}
+                onEdit={cell.kind === 'formula' || cell.kind === 'allocation' ? () => openTool('params', `formula:${cell.dataflow ?? column.dataflow_id}:${cell.step}`) : undefined}
+                onWhole={() => setUnitOpen(false)}
+                onSetting={(t, row, name) => openTool('params', `cell:${t}:${row}:${name}`)}
+              />
+            )}
+          </section>
+        </>
+      )}
+    </div>
+  );
+  // The block map and the picked block's strip log (decision 8).
+  const blocksPane = view && (
+    <div className={cn('space-y-2 p-2', fold === 'three' && 'min-h-0 overflow-auto')} data-slot="case-blocks">
+      <BlockMap blocks={view.blocks} picked={block} onPick={setBlock} />
+      <div className="flex flex-wrap items-center gap-1" data-slot="case-run-again">
+        <RotateCw className={cn('size-3 text-muted-foreground', rerunning && 'animate-spin')} />
+        <span className="text-muted-foreground">Run again</span>
+        {block && (
+          <Button size="sm" variant="outline" className="h-5 px-1.5 text-[11px]" disabled={rerunning} onClick={() => void runAgain(block)} title={`${block.join(' › ')} run again into the table from its setup, the rest kept`}>
+            this block
+          </Button>
+        )}
+        {block && block.length > 1 && (
+          <Button size="sm" variant="outline" className="h-5 px-1.5 text-[11px]" disabled={rerunning} onClick={() => void runAgain(block.slice(0, -1))} title={`Every block of ${block.slice(0, -1).join(' › ')} run again into the table`}>
+            its strip
+          </Button>
+        )}
+        <Button size="sm" variant="outline" className="h-5 px-1.5 text-[11px]" disabled={rerunning} onClick={() => void runAgain([])} title="Every block of the case run again into the table from its setup">
+          every block
+        </Button>
+      </div>
+      {block && (
+        <div className="space-y-1">
+          <div className="font-semibold">{block.join(' / ')}</div>
+          {column && at !== null ? <StripLog before={at > 0 ? before : after} after={after} fields={column.fields} followed={focus} onFollow={(u) => setFocus(u.id)} /> : <div className="text-muted-foreground">Running the block…</div>}
+        </div>
+      )}
+    </div>
+  );
+  // The units table (decision 12), in its own column filling the height (Case tab layout plan, decision 6).
+  const unitsPane = (
+    <div className={cn(fold !== 'one' && 'min-h-0 overflow-auto')} data-slot="case-units">
+      {column && at !== null && block ? <UnitsTable column={column} at={at} block={block} fill={fold !== 'one'} /> : <div className="p-2 text-muted-foreground">Pick a block on the map to see its units before and after the step.</div>}
+    </div>
+  );
+
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-auto text-xs" data-tool-panel="case" data-case={shown?.table ?? ''} onKeyDown={onKey}>
+    <div ref={foldRef} className="flex h-full min-h-0 flex-col overflow-auto text-xs" data-tool-panel="case" data-case={shown?.table ?? ''} onKeyDown={onKey}>
       <PanelHead line="A reserves table's case a step at a time: what each step reads and does to the whole case, its settings to change and see it run again." />
       {/* The header (Case tab layout plan, decisions 1 to 3): the cases, the case's dataflows, its figures, no ground made or lost. */}
       <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-2 py-1.5" data-slot="case-band">
@@ -388,7 +533,7 @@ export function ReservesCasePanel() {
           <Settings2 className="size-3" /> Setup
         </Button>
         <span className="ml-auto flex flex-wrap items-center gap-x-3">
-          <CaseFigures cases={cases} open={table.id} />
+          {fold !== 'one' && <CaseFigures cases={cases} open={table.id} />}
           {!openRow && shown && shown.stopped.length > 0 && <span className="text-destructive">{shown.stopped.length} block columns stopped</span>}
           {!openRow &&
             balance &&
@@ -432,145 +577,44 @@ export function ReservesCasePanel() {
           onStep={(n) => setStep(Math.max(0, n))}
         />
       )}
+      {/* The working area (Case tab layout plan, decisions 6 and 8): step, units table and block map side by side to the
+          foot of the dock; narrower, the block map under the step, then the units table under both. */}
       {!openRow && view && (
-        <div className="grid h-[28rem] shrink-0 grid-cols-[minmax(0,1fr)_minmax(14rem,20rem)] divide-x divide-border" data-slot="case-columns">
-          {/* The step (decisions 8, 9 and 11). */}
-          <div className="min-h-0 space-y-2 overflow-auto p-2" data-slot="case-step-pane">
-            {cell && at !== null && shown && (
-              <>
-                <div className="flex flex-wrap items-baseline gap-x-2">
-                  <span className="text-sm font-semibold">
-                    {at} · {stepLabel(cell.step)}
-                  </span>
-                  <span className="text-muted-foreground">{kindWords[cell.kind]}</span>
-                  {edits && (
-                    <StatusBadge tone="edited" title="The case is run on unsaved edits">
-                      run on edits
-                    </StatusBadge>
-                  )}
-                </div>
-                <div data-slot="case-rule" className={cn(cell.kind === 'built_in' && 'truncate')} title={cell.kind === 'built_in' ? cell.rule : undefined}>
-                  {cell.kind === 'built_in' ? (
-                    cell.rule
-                  ) : (
-                    <button type="button" className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground hover:underline" onClick={() => openTool('params', `formula:${cell.dataflow ?? column!.dataflow_id}:${cell.step}`)}>
-                      <Braces className="size-3" /> Open its script in the formula panel
-                    </button>
-                  )}
-                </div>
-                <div className="grid grid-cols-[3.5rem_1fr] gap-x-2 gap-y-0.5">
-                  <span className="text-muted-foreground">Reads</span>
-                  <span>
-                    {[...cell.fields_read, ...settingsRead].length === 0 && <span className="text-muted-foreground">nothing it names</span>}
-                    {cell.fields_read.map((f) => (
-                      <Chip key={`f${f}`}>{f}</Chip>
-                    ))}
-                    {settingsRead.map((f) => (
-                      <Chip key={`s${f}`} lit>
-                        {f}
-                      </Chip>
-                    ))}
-                    {/* The settings tables it reads them from (Case tab layout plan, decision 4: the input cards' place). */}
-                    {readsTable.size > 0 && <span className="mr-1 text-muted-foreground">from</span>}
-                    {column &&
-                      column.tables.map((name, t) => {
-                        if (!readsTable.has(t)) return null;
-                        const id = column.table_ids[t];
-                        const editedHere = !!id && drafts[id]?.kind === 'table';
-                        return (
-                          <button
-                            key={`t${t}`}
-                            type="button"
-                            className={cn('mr-1 mb-0.5 inline-block rounded border border-primary bg-selection px-1 text-[11px] hover:underline', editedHere ? 'text-edited' : 'text-primary')}
-                            title={`${name}: a settings table this step reads${editedHere ? ', run as edited' : ''}. Open it in the Parameters tab`}
-                            onClick={() => id && openTool('params', `show:${id}`)}
-                            data-slot="case-reads-table"
-                          >
-                            {name}
-                          </button>
-                        );
-                      })}
-                  </span>
-                  <span className="text-muted-foreground">Writes</span>
-                  <span>
-                    {writes.length === 0 ? <span className="text-muted-foreground">nothing to the table</span> : writes.flatMap((w) => w.parts).map((w) => <Chip key={w.folder}>{w.folder}</Chip>)}
-                  </span>
-                </div>
-                {/* The whole case first, so it's in sight as a setting is typed under it. */}
-                <section className="space-y-1">
-                  <div className="text-muted-foreground">Whole case at this step · every block{view.now?.ran_from ? ` · ran again from step ${view.now.ran_from}` : ''}</div>
-                  <WholeCase saved={view.saved} now={view.now} />
-                </section>
-                <section className="space-y-1">
-                  <div className="text-muted-foreground" title={`The rows read in order: the first that fits and holds a setting gives it. Ringed: what ${into ? unitWords(into) : 'the unit followed'} used.`}>
-                    Settings by seam and ply
-                  </div>
-                  {grid && <SettingsBySeam grid={grid} supplied={supplied} edited={editedCells} onSet={setCell} />}
-                </section>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button size="sm" className="h-7" disabled={!edits || edits.tables.length === 0 || saving || !!edits.why} onClick={() => void saveAndRun()} title="Save the settings tables as typed, then run the case again from its setup: each its next revision, one undo each">
-                    <Save className="size-3.5" /> {saving ? 'Saving…' : 'Save and run the case'}
-                  </Button>
-                  {edits && edits.tables.length > 0 && (
-                    <Button size="sm" variant="outline" className="h-7" onClick={discard} title="Put the settings back as saved">
-                      <Undo2 className="size-3.5" /> Discard
-                    </Button>
-                  )}
-                  <span className={cn(edits ? 'text-edited' : 'text-muted-foreground')}>{edits ? 'Unsaved: the whole case runs again as you type.' : 'Type a setting to see the whole case run again.'}</span>
-                  {edits?.dataflow && <span className="text-muted-foreground">The dataflow's own edits save in the Parameters tab.</span>}
-                </div>
-                {said && <div className={said.refused ? 'text-destructive' : 'text-ok'}>{said.text}</div>}
-                <section className="border-t border-border pt-1" data-slot="case-unit-by-unit">
-                  <button type="button" className="text-muted-foreground hover:text-foreground hover:underline" onClick={() => setUnitOpen((o) => !o)}>
-                    {unitOpen ? '▾' : '▸'} This step unit by unit: {into ? unitWords(into) : 'the unit followed'}'s workings{cell.kind === 'formula' ? ' and its formula traced' : ''}
-                  </button>
-                  {unitOpen && column && (
-                    <StepPane
-                      column={column}
-                      at={at}
-                      summary={summaries[at]}
-                      focus={into ? focusOf(into) : null}
-                      trace={trace}
-                      onEdit={cell.kind === 'formula' || cell.kind === 'allocation' ? () => openTool('params', `formula:${cell.dataflow ?? column.dataflow_id}:${cell.step}`) : undefined}
-                      onWhole={() => setUnitOpen(false)}
-                      onSetting={(t, row, name) => openTool('params', `cell:${t}:${row}:${name}`)}
-                    />
-                  )}
-                </section>
-              </>
-            )}
-          </div>
-          {/* The block map and the picked block's strip log (decision 8). */}
-          <div className="min-h-0 space-y-2 overflow-auto p-2" data-slot="case-blocks">
-            <BlockMap blocks={view.blocks} picked={block} onPick={setBlock} />
-            <div className="flex flex-wrap items-center gap-1" data-slot="case-run-again">
-              <RotateCw className={cn('size-3 text-muted-foreground', rerunning && 'animate-spin')} />
-              <span className="text-muted-foreground">Run again</span>
-              {block && (
-                <Button size="sm" variant="outline" className="h-5 px-1.5 text-[11px]" disabled={rerunning} onClick={() => void runAgain(block)} title={`${block.join(' › ')} run again into the table from its setup, the rest kept`}>
-                  this block
-                </Button>
-              )}
-              {block && block.length > 1 && (
-                <Button size="sm" variant="outline" className="h-5 px-1.5 text-[11px]" disabled={rerunning} onClick={() => void runAgain(block.slice(0, -1))} title={`Every block of ${block.slice(0, -1).join(' › ')} run again into the table`}>
-                  its strip
-                </Button>
-              )}
-              <Button size="sm" variant="outline" className="h-5 px-1.5 text-[11px]" disabled={rerunning} onClick={() => void runAgain([])} title="Every block of the case run again into the table from its setup">
-                every block
-              </Button>
-            </div>
-            {block && (
-              <div className="space-y-1">
-                <div className="font-semibold">{block.join(' / ')}</div>
-                {column && at !== null ? <StripLog before={at > 0 ? before : after} after={after} fields={column.fields} followed={focus} onFollow={(u) => setFocus(u.id)} /> : <div className="text-muted-foreground">Running the block…</div>}
+        <div
+          className={cn(
+            'divide-border',
+            fold === 'three' && 'grid min-h-[20rem] flex-1 grid-cols-[minmax(22rem,1fr)_minmax(0,1.4fr)_minmax(16rem,0.9fr)] grid-rows-[minmax(0,1fr)] divide-x',
+            fold === 'two' && 'grid min-h-[20rem] flex-1 grid-cols-[minmax(20rem,1fr)_minmax(0,1.3fr)] grid-rows-[minmax(0,1fr)] divide-x',
+            fold === 'one' && 'flex flex-col divide-y',
+          )}
+          data-slot="case-columns"
+          data-fold={fold}
+        >
+          {fold === 'three' && (
+            <>
+              {stepPane}
+              {unitsPane}
+              {blocksPane}
+            </>
+          )}
+          {fold === 'two' && (
+            <>
+              <div className="min-h-0 divide-y divide-border overflow-auto">
+                {stepPane}
+                {blocksPane}
               </div>
-            )}
-          </div>
+              {unitsPane}
+            </>
+          )}
+          {fold === 'one' && (
+            <>
+              {stepPane}
+              {blocksPane}
+              {unitsPane}
+            </>
+          )}
         </div>
       )}
-      {/* The units table under the step view (decision 12). */}
-      {!openRow && view && column && at !== null && block && <UnitsTable column={column} at={at} block={block} />}
     </div>
   );
 }
@@ -578,4 +622,20 @@ export function ReservesCasePanel() {
 /** A name the step reads or writes: a setting lit gold, a field or folder plain. */
 function Chip({ children, lit = false }: { children: string; lit?: boolean }) {
   return <span className={cn('mr-1 mb-0.5 inline-block rounded border px-1 font-mono text-[11px]', lit ? 'border-primary text-primary' : 'border-border')}>{children}</span>;
+}
+
+/** The tab's width, watched, as a fold (Case tab layout plan, decision 8): the dock's own width, not the window's. */
+function useCaseFold() {
+  const [fold, setFold] = useState<CaseFold>('three');
+  const watching = useRef<ResizeObserver | null>(null);
+  const ref = useCallback((element: HTMLDivElement | null) => {
+    watching.current?.disconnect();
+    watching.current = null;
+    if (!element) return;
+    const look = () => setFold(caseFold(element.clientWidth));
+    look();
+    watching.current = new ResizeObserver(look);
+    watching.current.observe(element);
+  }, []);
+  return [ref, fold] as const;
 }
