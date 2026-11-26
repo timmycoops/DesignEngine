@@ -257,3 +257,22 @@ export function withCell(table: ParameterTable, row: number, column: string, tex
   });
   return { ...table, columns, rows };
 }
+
+/**
+ * How the case tab's working area sits at a dock's width (Case tab layout plan, decision 8): step, units table and block
+ * map side by side from 1,400 px; under it the block map goes under the step; under 1,000 px the units table goes under
+ * both, and the header's figures fold into the case pill's tip.
+ */
+export type CaseFold = 'three' | 'two' | 'one';
+export function caseFold(width: number): CaseFold {
+  return width >= 1400 ? 'three' : width >= 1000 ? 'two' : 'one';
+}
+
+/**
+ * The block map's cells grow to fit (decision 6): a column a block of the longest strip, so a strip's blocks line up
+ * under the next strip's; past 40 blocks a strip the cells stay small and wrap. Null: wrap.
+ */
+export function mapColumns(rows: MapRow[]): number | null {
+  const most = rows.reduce((m, r) => Math.max(m, r.blocks.length), 0);
+  return most > 0 && most <= 40 ? most : null;
+}

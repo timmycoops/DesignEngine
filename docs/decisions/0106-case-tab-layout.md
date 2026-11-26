@@ -55,7 +55,28 @@ place.
   dataflow and New case from +, a row dataflow opened from the chain, figures read off the pills. The `--dataflow` bench's
   case pick and out-of-date warning moved too.
 
+### Workstream 2: the working area (decisions 6 and 8)
+
+- **Three columns to the foot of the dock** (`ReservesCasePanel.tsx`, `data-slot="case-columns"`): the step, the units
+  table and the block map side by side, the units table the widest, each scrolling in its own column; the fixed 28 rem
+  goes. The units table is moved up from the foot into its column (`case-units`), its toolbar staying over the rows as
+  they scroll; with no block picked the column says to pick one.
+- **The settings by seam and ply its own width**, so a value sits next to its row.
+- **The block map's cells grow to fit** (`mapColumns`, `reservesCase.ts`): a column a block of the longest strip, so the
+  strips line up; past 40 blocks a strip they stay small and wrap. Its own scroll box goes: the column scrolls.
+- **The flow says its losses in full**: each kind named (`582,418 t loss, highashloss`), the line wrapping, no "…".
+- **Narrow docks** (`caseFold`, the tab's own width watched): from 1,400 px three columns; under it the block map under
+  the step with the units table beside both; under 1,000 px the units table under both, the tab scrolling, and the
+  header's figures left to the case pill's tip.
+- **Checked:** `pnpm test` for the folds at 2,000, 1,400, 1,399, 1,000, 999 and 0 px and the map's columns (7, 40, past
+  40, none). In the app (`zd-app --bench --case`, the workflow demo, the tab given the 1,600 × 1,000 window, 1,600 × 878):
+  56 of 56, the four new ones the three layouts by where each part sits (the columns' tops level and their feet at the
+  tab's foot when wide), nothing on the flow cut off at 1,600 and 1,399 px, and 28 unit rows in sight against the plan's
+  10; pictures at 1,600, 1,399 and 999 px.
+
 ## Known limits
 
-- The three columns are still a fixed 28 rem and the units table sits under them until workstream 2.
 - A case pill's tip is the browser's own: it shows after a pause, and not on touch.
+- The folds go by the tab's width, not the window's: a dock made narrow by the layout folds as a narrow window would.
+- Under 1,000 px the parts are under each other and the tab scrolls; the units table is then as tall as its rows.
+- Not tried by hand.

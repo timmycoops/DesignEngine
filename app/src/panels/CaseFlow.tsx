@@ -68,11 +68,11 @@ export function CaseFlow({ flow, saved, stages, names, kinds, ranMs, at, onStep 
                 ))}
               </div>
               <Lane look="bg-coal" share={coalOf(s) / coalMost} label={coalWords(s, coalOf(s))} edited={coalMoved} was={before ? `was ${coalWords(before, coalOf(before))}` : undefined} title="Coal still in play after this stage" />
-              <div className={cn('h-4 truncate text-[11px]', s.lost > 1e-9 ? (lostMoved ? 'text-edited' : 'text-destructive') : 'text-transparent')} title={s.lostBy.map((m) => `${m.what}: ${m.tonnes === null ? `${Math.round(m.volume).toLocaleString('en-AU')} m³` : tonnes(m.tonnes)}`).join('\n')} data-slot="flow-lost">
-                {s.lost > 1e-9 ? `− ${s.lostTonnes === null ? `${Math.round(s.lost).toLocaleString('en-AU')} m³` : tonnes(s.lostTonnes)} ${s.lostBy[0] ? s.lostBy[0].what.split(' ')[0] : 'taken'}${s.lostBy.length > 1 ? ' …' : ''}` : '·'}
+              <div className={cn('min-h-4 text-[11px] leading-4', s.lost > 1e-9 ? (lostMoved ? 'text-edited' : 'text-destructive') : 'text-transparent')} title={s.lostBy.map((m) => `${m.what}: ${m.tonnes === null ? `${Math.round(m.volume).toLocaleString('en-AU')} m³` : tonnes(m.tonnes)}`).join('\n')} data-slot="flow-lost">
+                {s.lost > 1e-9 ? `− ${s.lostTonnes === null ? `${Math.round(s.lost).toLocaleString('en-AU')} m³` : tonnes(s.lostTonnes)} ${s.lostBy.length ? [...new Set(s.lostBy.map((m) => m.what.split(' ')[0]))].join(', ') : 'taken'}` : '·'}
               </div>
               <Lane look="bg-waste" share={s.waste / wasteMost} label={bcm(s.waste)} edited={false} title="Waste still in play after this stage" />
-              <div className={cn('h-4 truncate text-[11px]', s.letIn > 1e-9 ? 'text-warning' : 'text-transparent')} title={s.letInBy.map((m) => `${m.what}: ${bcm(m.volume)}`).join('\n')} data-slot="flow-let-in">
+              <div className={cn('min-h-4 text-[11px] leading-4', s.letIn > 1e-9 ? 'text-warning' : 'text-transparent')} title={s.letInBy.map((m) => `${m.what}: ${bcm(m.volume)}`).join('\n')} data-slot="flow-let-in">
                 {s.letIn > 1e-9 ? `+ ${bcm(s.letIn)} rock into ROM` : '·'}
               </div>
               {s.stopped > 0 && <div className="text-[11px] text-destructive">{s.stopped} blocks stopped</div>}

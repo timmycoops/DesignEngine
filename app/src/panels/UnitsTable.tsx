@@ -19,7 +19,7 @@ type Show = 'arrow' | 'was';
 const moved = (a: number | null | undefined, b: number | null | undefined) =>
   (a == null) !== (b == null) || (a != null && b != null && Math.abs(a - b) > 1e-9 * Math.max(1, Math.abs(a)));
 
-export function UnitsTable({ column, at, block }: { column: ColumnSteps; at: number; block: string[] }) {
+export function UnitsTable({ column, at, block, fill = false }: { column: ColumnSteps; at: number; block: string[]; fill?: boolean }) {
   const [by, setBy] = useState<GroupBy>('section');
   const [set, setSet] = useState<string>('This step');
   const [mine, setMine] = useState<FieldSet[]>([]);
@@ -84,8 +84,9 @@ export function UnitsTable({ column, at, block }: { column: ColumnSteps; at: num
   };
 
   return (
-    <section className="space-y-1.5 border-t border-border p-2" data-slot="units-table">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+    <section className={cn('space-y-1.5 p-2', !fill && 'border-t border-border')} data-slot="units-table">
+      {/* In its own column (Case tab layout plan, decision 6) the toolbar stays over the rows as they scroll. */}
+      <div className={cn('flex flex-wrap items-center gap-x-3 gap-y-1', fill && 'sticky -top-2 z-10 -mx-2 -mt-2 bg-background px-2 py-1.5')}>
         <span className="font-semibold">
           Units of {block.join(' / ')} {at > 0 ? `before and after ${column.steps[at].step}` : 'as read'}
         </span>
