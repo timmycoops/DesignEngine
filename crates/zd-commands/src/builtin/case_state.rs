@@ -143,9 +143,16 @@ pub fn case_state(project: &zd_core::Project, log: &[LogEntry], table: ObjectId)
             if let Ok(p) = serde_json::from_value::<super::RunReservesParams>(r.params.clone()) {
                 if setup.input.is_none() {
                     let ran: HashSet<ObjectId> = p.blocks.iter().copied().collect();
-                    let added = setup.blocks.resolve(project.objects()).into_iter().filter(|id| !ran.contains(id)).count();
+                    let picked: HashSet<ObjectId> = setup.blocks.resolve(project.objects()).into_iter().collect();
+                    let added = picked.iter().filter(|id| !ran.contains(id)).count();
                     if added > 0 {
                         why.push(format!("{added} block{} added to what the setup picks", plural(added)));
+                    }
+                    // A layer taken out or a filter narrowed in the setup (Case setup and unit plan, decision 2): blocks
+                    // it ran on still there but no longer picked. One deleted is said as gone above.
+                    let dropped = ran.iter().filter(|id| !picked.contains(id) && project.object(**id).is_some()).count();
+                    if dropped > 0 {
+                        why.push(format!("{dropped} block{} no longer picked by the setup", plural(dropped)));
                     }
                 }
                 let same = p.dataflow == setup.dataflow

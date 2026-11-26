@@ -60,7 +60,8 @@ export function DataflowChain({ state, open, addOns, fallback, onOpen }: { state
 /**
  * Run ▾ (Reserves case plan, decisions 4 and 6; Case tab layout plan, decision 3): the case's dataflows in run order,
  * each with its range, the settings tables it reads, whether it's up to date and why not, and Run; then Run what's out of
- * date and Run all, in order, each run its own undo. Nothing runs by itself.
+ * date and Run all, in order, each run its own undo. Nothing runs by itself. The reserves dataflow's Run is every block
+ * again, the one place the whole case runs from (Case setup and unit plan, decision 2).
  */
 export function CaseSwitcher({ state, open, running, onRun }: { state: CaseState | null; open: string | null; running: boolean; onRun: (what: 'stale' | 'all' | DataflowState) => void }) {
   const [shown, setShown] = useState(false);
@@ -106,8 +107,16 @@ export function CaseSwitcher({ state, open, running, onRun }: { state: CaseState
                 )}
               </div>
               <div className="flex gap-1">
-                <Button size="sm" variant="outline" className="h-6 px-2" disabled={running} onClick={() => onRun(d)} title={`Run ${d.name} alone: those below it aren't run`} data-slot="case-run-one">
-                  <Play className="size-3" /> Run
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-6 px-2"
+                  disabled={running}
+                  onClick={() => onRun(d)}
+                  title={d.reserves ? `Every block of the case run again from its setup with ${d.name}: those below it aren't run` : `Run ${d.name} alone: those below it aren't run`}
+                  data-slot="case-run-one"
+                >
+                  <Play className="size-3" /> {d.reserves ? 'Every block again' : 'Run'}
                 </Button>
               </div>
             </div>

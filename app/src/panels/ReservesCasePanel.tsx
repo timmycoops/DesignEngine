@@ -82,7 +82,8 @@ export function ReservesCasePanel() {
   const [openFlow, setOpenFlow] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [caseSaid, setCaseSaid] = useState<{ text: string; refused: boolean } | null>(null);
-  // The case's Setup open under the band (workstream 7, the Setup tab's place), and the step unit by unit.
+  // The case's Setup, its own view in place of the working area (Case setup and unit plan, decision 1), and the step unit
+  // by unit.
   const [setupOpen, setSetupOpen] = useState(false);
   const [unitOpen, setUnitOpen] = useState(false);
   const [rerunning, setRerunning] = useState(false);
@@ -342,8 +343,15 @@ export function ReservesCasePanel() {
   // ↑ and ↓ step through the steps, away from a box being typed in.
   const steps = column?.steps ?? [];
   const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
-    if (step === null || e.ctrlKey || e.altKey || e.metaKey) return;
+    if (e.ctrlKey || e.altKey || e.metaKey) return;
     if ((e.target as HTMLElement).closest('input, select, textarea, [contenteditable="true"]')) return;
+    // Esc leaves the Setup for the case (decision 1).
+    if (setupOpen && e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      return setSetupOpen(false);
+    }
+    if (setupOpen || step === null) return;
     const by = e.key === 'ArrowDown' ? 1 : e.key === 'ArrowUp' ? -1 : 0;
     if (!by) return;
     e.preventDefault();
@@ -489,7 +497,7 @@ export function ReservesCasePanel() {
       <BlockMap blocks={view.blocks} picked={block} onPick={setBlock} />
       <div className="flex flex-wrap items-center gap-1" data-slot="case-run-again">
         <RotateCw className={cn('size-3 text-muted-foreground', rerunning && 'animate-spin')} />
-        <span className="text-muted-foreground">Run again</span>
+        <span className="text-muted-foreground" title="Every block runs from Run, in the header">Run again</span>
         {block && (
           <Button size="sm" variant="outline" className="h-5 px-1.5 text-[11px]" disabled={rerunning} onClick={() => void runAgain(block)} title={`${block.join(' › ')} run again into the table from its setup, the rest kept`}>
             this block
@@ -500,9 +508,6 @@ export function ReservesCasePanel() {
             its strip
           </Button>
         )}
-        <Button size="sm" variant="outline" className="h-5 px-1.5 text-[11px]" disabled={rerunning} onClick={() => void runAgain([])} title="Every block of the case run again into the table from its setup">
-          every block
-        </Button>
       </div>
       {block && (
         <div className="space-y-1">
@@ -526,7 +531,7 @@ export function ReservesCasePanel() {
       <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-2 py-1.5" data-slot="case-band">
         <CasePills cases={cases} tables={tables} open={table.id} more={caseMore} onOpen={setPick} />
         <span className="h-4 w-px bg-border" />
-        <DataflowChain state={state} open={openState?.dataflow ?? null} addOns={addOnNames} fallback={column?.dataflow ?? '…'} onOpen={(d) => setOpenFlow(d.reserves ? null : d.dataflow)} />
+        <DataflowChain state={state} open={openState?.dataflow ?? null} addOns={addOnNames} fallback={column?.dataflow ?? '…'} onOpen={(d) => (setSetupOpen(false), setOpenFlow(d.reserves ? null : d.dataflow))} />
         {openRow && <span className="text-muted-foreground">rows, on {rangeWords(openRow)}</span>}
         <CaseSwitcher state={state} open={openState?.dataflow ?? null} running={running} onRun={(w) => void runCase(w)} />
         <Button size="sm" variant={setupOpen ? 'secondary' : 'outline'} className="h-6 gap-1 px-2" onClick={() => setSetupOpen((o) => !o)} data-slot="case-setup" title="What fills this case: its blocks, dataflows, settings tables in order and where each field comes from">
@@ -548,24 +553,24 @@ export function ReservesCasePanel() {
             ))}
         </span>
       </div>
-      <CaseForms cases={cases} open={table.id} onOpen={setPick} onOpenDataflow={setOpenFlow} />
-      {setupOpen && <CaseSetup table={table.id} />}
+      <CaseForms cases={cases} open={table.id} onOpen={setPick} onOpenDataflow={(d) => (setSetupOpen(false), setOpenFlow(d))} />
+      {setupOpen && <CaseSetup table={table.id} onDone={() => setSetupOpen(false)} />}
       {caseSaid && (
         <div className={cn('px-2 py-1', caseSaid.refused ? 'text-destructive' : 'text-ok')} data-slot="case-said">
           {caseSaid.text}
         </div>
       )}
-      {openRow && <RowDataflowView table={table} dataflow={openRow} />}
-      {!openRow && error && <div className="px-2 py-1 text-destructive">{error}</div>}
-      {!openRow && liveWhy && (
+      {!setupOpen && openRow && <RowDataflowView table={table} dataflow={openRow} />}
+      {!setupOpen && !openRow && error && <div className="px-2 py-1 text-destructive">{error}</div>}
+      {!setupOpen && !openRow && liveWhy && (
         <div className="px-2 py-1 text-warning" data-slot="live-why">
           Not run on the latest edit: {liveWhy}. Showing the last that ran.
         </div>
       )}
-      {!openRow && !view && !error && <div className="p-3 text-muted-foreground">Running the case…</div>}
+      {!setupOpen && !openRow && !view && !error && <div className="p-3 text-muted-foreground">Running the case…</div>}
       {/* The flow (decision 10), and the step list (Case tab layout plan, decision 5): the case through every stage, as
           edited where there are edits; ↑ and ↓ step through it. */}
-      {!openRow && view && column && (
+      {!setupOpen && !openRow && view && column && (
         <CaseFlow
           flow={view.now_flow ?? view.saved_flow}
           saved={view.now_flow ? view.saved_flow : null}
@@ -579,7 +584,7 @@ export function ReservesCasePanel() {
       )}
       {/* The working area (Case tab layout plan, decisions 6 and 8): step, units table and block map side by side to the
           foot of the dock; narrower, the block map under the step, then the units table under both. */}
-      {!openRow && view && (
+      {!setupOpen && !openRow && view && (
         <div
           className={cn(
             'divide-border',

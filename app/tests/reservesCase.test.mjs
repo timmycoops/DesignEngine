@@ -2,7 +2,7 @@
 // against the last run, and a step's settings by seam and ply, on made-up steps and blocks. Run with `pnpm test`.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { blockMap, caseFold, caseRows, changeWords, mapColumns, mapMeasure, scriptSettings, settingsGrid, shadeOf, stagesOf, stepSettings, suppliedFor, withCell } from '../src/panels/reservesCase.ts';
+import { blockMap, caseFold, caseRows, changeWords, countWords, foldsNames, mapColumns, mapMeasure, scriptSettings, settingsGrid, shadeOf, stagesOf, stepSettings, suppliedFor, withCell } from '../src/panels/reservesCase.ts';
 
 const s = (step, kind = 'built_in', dataflow) => ({ step, kind, ...(dataflow ? { dataflow } : {}) });
 
@@ -138,4 +138,12 @@ test("the block map's cells line up a column a block of the longest strip, and w
   assert.equal(mapColumns([strip(40)]), 40);
   assert.equal(mapColumns([strip(41), strip(2)]), null);
   assert.equal(mapColumns([]), null);
+});
+
+test('a list of names folds past twelve, its count said in words (Case setup and unit plan, decision 4)', () => {
+  assert.equal(foldsNames(12), false);
+  assert.equal(foldsNames(13), true);
+  assert.equal(countWords(1, 'setting'), '1 setting');
+  assert.equal(countWords(53, 'setting'), '53 settings');
+  assert.equal(countWords(1200, 'block'), '1,200 blocks');
 });

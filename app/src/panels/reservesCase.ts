@@ -276,3 +276,16 @@ export function mapColumns(rows: MapRow[]): number | null {
   const most = rows.reduce((m, r) => Math.max(m, r.blocks.length), 0);
   return most > 0 && most <= 40 ? most : null;
 }
+
+/**
+ * A list of names longer than this folds to a count, opened on a click (Case setup and unit plan, decision 4), so a
+ * table read for 53 settings is one line until wanted.
+ */
+export const FOLD_NAMES = 12;
+export function foldsNames(count: number): boolean {
+  return count > FOLD_NAMES;
+}
+/** A count of things in words: "1 setting", "53 settings". */
+export function countWords(count: number, noun: string): string {
+  return `${count.toLocaleString('en-AU')} ${noun}${count === 1 ? '' : 's'}`;
+}
