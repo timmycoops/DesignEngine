@@ -908,7 +908,8 @@ async function checkRunAgain(summary: ProjectSummary, expect: Expect, show: Show
   pressIn(params(), 'Save');
   await wait(300);
   showPanel(api, 'case');
-  const changed = () => nb()?.querySelector('[data-slot="case-open-state"]')?.textContent ?? '';
+  // Out of date is marked on the dataflow's link, why in its tip (Case tab layout plan, decision 3).
+  const changed = () => nb()?.querySelector('[data-slot="case-open-state"]')?.getAttribute('title') ?? '';
   for (let k = 0; k < 100 && !changed().includes('Reserves assumptions'); k++) await wait(100);
   const warned = changed().includes('Reserves assumptions');
   const tableName = summary.objects.find((o) => o.kind === 'table' && o.name.includes('Base'))?.name ?? '';

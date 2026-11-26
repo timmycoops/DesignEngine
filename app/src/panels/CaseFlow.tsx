@@ -8,7 +8,8 @@ import type { Stage } from './reservesCase';
  * The flow across the Reserves case tab (Reserves case plan, decision 10, workstream 6): the case carried through the
  * dataflow a stage a column. The coal lane in tonnes and the waste lane in BCM, each as wide as it is against the most it
  * holds; coal a stage takes leaves red, rock it lets in amber. A click on a stage or a step goes there; the stage open is
- * lit; a figure the edits moved is blue, with what it was.
+ * lit; a figure the edits moved is blue, with what it was. It is the step list too (Case tab layout plan, decision 5): the
+ * stages share the width, each naming its steps, the step open lit, those that ran again on the last edit with their time.
  */
 
 const tonnes = (v: number) => `${Math.round(v).toLocaleString('en-AU')} t`;
@@ -17,7 +18,9 @@ const coalOf = (s: FlowStage) => s.coalTonnes ?? s.coal;
 const coalWords = (s: FlowStage, v: number) => (s.coalTonnes === null ? `${Math.round(v).toLocaleString('en-AU')} m³` : tonnes(v));
 const moved = (a: number, b: number) => Math.abs(a - b) > 1e-6 * Math.max(1, Math.abs(b));
 
-export function CaseFlow({ flow, saved, stages, names, at, onStep }: { flow: FlowStep[]; saved: FlowStep[] | null; stages: Stage[]; names: string[]; at: number | null; onStep: (step: number) => void }) {
+const HOW = 'Coal in tonnes and waste in BCM after this stage. Red: coal the stage takes. Amber: rock let into ROM.';
+
+export function CaseFlow({ flow, saved, stages, names, kinds, ranMs, at, onStep }: { flow: FlowStep[]; saved: FlowStep[] | null; stages: Stage[]; names: string[]; kinds: string[]; ranMs: Map<number, number>; at: number | null; onStep: (step: number) => void }) {
   const shown = flowStages(flow, stages);
   if (shown.length === 0) return null;
   const was = saved ? new Map(flowStages(saved, stages).map((s) => [s.name + s.steps[0], s])) : null;
@@ -25,8 +28,7 @@ export function CaseFlow({ flow, saved, stages, names, at, onStep }: { flow: Flo
   const wasteMost = Math.max(...shown.map((s) => s.waste), 1);
   return (
     <div className="shrink-0 border-b border-border px-2 py-1.5" data-slot="case-flow">
-      <div className="mb-1 text-muted-foreground">The flow · coal in tonnes and waste in BCM through each stage · red: coal a stage takes · amber: rock let into ROM · click a stage or step to go there</div>
-      <div className="flex gap-1 overflow-x-auto pb-1">
+      <div className="grid auto-cols-fr grid-flow-col gap-1">
         {shown.map((s) => {
           const open = at !== null && s.steps.includes(at);
           const before = was?.get(s.name + s.steps[0]);
@@ -35,7 +37,7 @@ export function CaseFlow({ flow, saved, stages, names, at, onStep }: { flow: Flo
           return (
             <div
               key={s.name + s.steps[0]}
-              className={cn('w-36 shrink-0 rounded border px-1.5 py-1', open ? 'border-primary bg-selection' : 'border-border')}
+              className={cn('min-w-0 rounded border px-1.5 py-1', open ? 'border-primary' : 'border-border')}
               data-slot="flow-stage"
               data-stage={s.name}
               data-coal={Math.round(coalOf(s))}
@@ -45,7 +47,7 @@ export function CaseFlow({ flow, saved, stages, names, at, onStep }: { flow: Flo
               data-coal-m3={s.coal}
               data-lost-m3={s.lost}
             >
-              <button type="button" className={cn('block w-full truncate text-left font-semibold hover:underline', open && 'text-primary')} title={`Go to ${s.name}`} onClick={() => onStep(s.steps.find((n) => n > 0) ?? 0)}>
+              <button type="button" className={cn('block w-full truncate text-left font-semibold hover:underline', open && 'text-primary')} title={`Go to ${s.name}. ${HOW}`} onClick={() => onStep(s.steps.find((n) => n > 0) ?? 0)}>
                 {s.name}
               </button>
               <div className="mb-1 flex flex-wrap gap-0.5">
@@ -53,13 +55,15 @@ export function CaseFlow({ flow, saved, stages, names, at, onStep }: { flow: Flo
                   <button
                     key={n}
                     type="button"
-                    data-slot="flow-step"
-                    data-step={n}
-                    title={n === 0 ? 'The blocks as read' : `${n} · ${stepLabel(names[n] ?? '')}`}
-                    className={cn('h-4 min-w-4 rounded px-0.5 text-[10px] tabular-nums', n === at ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-accent')}
+                    data-slot="case-step"
+                    data-step={names[n] ?? ''}
+                    data-n={n}
+                    title={n === 0 ? 'The blocks as read' : `${n} · ${stepLabel(names[n] ?? '')} · ${kinds[n] ?? ''}${ranMs.has(n) ? ' · ran again on the last edit' : ''}`}
+                    className={cn('max-w-full truncate rounded px-1 text-[11px]', n === at ? 'bg-selection font-semibold text-primary ring-1 ring-primary' : 'bg-muted text-muted-foreground hover:bg-accent')}
                     onClick={() => onStep(n)}
                   >
-                    {n}
+                    {n === 0 ? 'as read' : stepLabel(names[n] ?? '')}
+                    {ranMs.has(n) && <span className="ml-1 text-edited tabular-nums">{Math.round(ranMs.get(n)!)} ms</span>}
                   </button>
                 ))}
               </div>

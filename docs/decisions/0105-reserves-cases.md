@@ -394,3 +394,5 @@ Base is the case named Base, else the first made, with four headline figures ("B
 - **A row dataflow's formulas are checked against every reserves table's columns** in the project, not the one case's;
   a column only another case has passes the check and comes in empty when run on this one. Its Levels and add-ons show
   in the Parameters tab's dataflow editor though a row dataflow has neither.
+- **The tab's layout** is laid out again by 0106 (the Case tab layout plan): the band, cases, input cards and steps list
+  as built here are its header, + and the flow.

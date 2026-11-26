@@ -17,8 +17,10 @@ and one results dock under the view where every table opens as a tab (Run log, T
 Workflow canvas, Face design; the Dataflow and Setup tabs are gone into the Reserves case tab, 0105 workstream 7, and a
 saved layout's copy closes as it opens, `RETIRED`). The Reserves case tab (0105) edits settings through the same unsaved edits
 (`drafts`) as the Parameters tab, which lays another tab's edits on its grid (`withTable`); a tab that edits a parameter
-table goes through `setDraft`, never a store of its own. Its Open another dataflow lists the case's dataflows (`case_state`) and runs them by
-`reserves.run` and `table.run_dataflow`, as Python's `run_case` does, each its own undo; a row dataflow opens in the same tab. Its cases (`CasesBar`) make New case, Copy case and Add a dataflow
+table goes through `setDraft`, never a store of its own. Its layout is 0106's: one header line (the cases as pills with +,
+the case's dataflows as a chain with Run and Setup, the open case's figures and the balance), the flow across the width
+as the step list, then the step and the block map; each part said once, help in tips, not lines. Its Run lists the case's dataflows (`case_state`) and runs them by
+`reserves.run` and `table.run_dataflow`, as Python's `run_case` does, each its own undo; a row dataflow opens in the same tab from the chain. Its cases (`CasesBar`) make New case, Copy case and Add a dataflow
 from existing commands, each its own undo, and its Setup (`CaseSetup`) is the old Setup tab fixed to the case open. Tables holds every table, picked from its Table list: Objects, then each reserves table, one grid
 for both (`docs/decisions/0099-tables-and-scripts.md`). A new panel names its dock in `PANELS` (`app/src/workspace/Workspace.tsx`) and opens
 through `showPanel`; it never adds a column or a row of its own, and the view keeps its room. The view has no tab strip,

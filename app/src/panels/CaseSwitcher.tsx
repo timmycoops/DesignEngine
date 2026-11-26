@@ -7,11 +7,62 @@ import { cn } from 'cn';
 import { rangeWords, toRun } from './flowStages';
 
 /**
- * Open another dataflow (Reserves case plan, decisions 4 and 6, workstream 6): from the band, the case's dataflows in run
- * order, each with its range, the settings tables it reads, whether it's up to date and why not, Open and Run; then Run
- * what's out of date and Run all, in order, each run its own undo. Nothing runs by itself.
+ * The case's dataflows as a chain on the header (Case tab layout plan, decision 3): in run order, the reserves one named
+ * with its add-ons, the open one lit, one out of date marked with why in its tip; a click opens it. Before the case's
+ * state is read, the dataflow the column ran.
  */
-export function CaseSwitcher({ state, open, running, onOpen, onRun }: { state: CaseState | null; open: string | null; running: boolean; onOpen: (d: DataflowState) => void; onRun: (what: 'stale' | 'all' | DataflowState) => void }) {
+export function DataflowChain({ state, open, addOns, fallback, onOpen }: { state: CaseState | null; open: string | null; addOns: string[]; fallback: string; onOpen: (d: DataflowState) => void }) {
+  const dataflows = state?.dataflows ?? [];
+  if (dataflows.length === 0)
+    return (
+      <span className="font-semibold" data-slot="case-dataflow">
+        {fallback}
+        {addOns.length > 0 && <span className="font-normal text-muted-foreground"> + {addOns.join(', ')}</span>}
+      </span>
+    );
+  return (
+    <span className="flex flex-wrap items-center gap-x-1" data-slot="case-chain">
+      {dataflows.map((d, i) => {
+        const lit = d.dataflow === open;
+        const tip = [
+          `${i + 1} of ${dataflows.length}: ${d.name}, ${d.reserves ? 'makes the rows' : `rows, on ${rangeWords(d)}`}`,
+          d.tables.length ? `Reads ${d.tables.join(', ')}` : '',
+          d.up_to_date ? `Up to date${d.ran ? `, ran ${d.ran}` : ''}` : `Out of date: ${d.why.join('; ')}`,
+        ]
+          .filter(Boolean)
+          .join('\n');
+        return (
+          <span key={d.dataflow} className="flex items-center gap-x-1">
+            {i > 0 && <span className="text-muted-foreground">→</span>}
+            <button
+              type="button"
+              className={cn('rounded px-1 hover:bg-accent', lit ? 'font-semibold text-foreground' : 'text-muted-foreground')}
+              title={lit ? tip : `Open ${d.name}\n${tip}`}
+              onClick={() => !lit && onOpen(d)}
+              data-slot={lit ? 'case-dataflow' : 'case-chain-link'}
+              data-dataflow={d.name}
+            >
+              {d.name}
+              {d.reserves && addOns.length > 0 && <span className="font-normal text-muted-foreground"> + {addOns.join(', ')}</span>}
+              {!d.up_to_date && (
+                <span className="ml-1 font-normal text-warning" title={d.why.join('; ')} data-slot={lit ? 'case-open-state' : undefined}>
+                  • out of date
+                </span>
+              )}
+            </button>
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
+/**
+ * Run ▾ (Reserves case plan, decisions 4 and 6; Case tab layout plan, decision 3): the case's dataflows in run order,
+ * each with its range, the settings tables it reads, whether it's up to date and why not, and Run; then Run what's out of
+ * date and Run all, in order, each run its own undo. Nothing runs by itself.
+ */
+export function CaseSwitcher({ state, open, running, onRun }: { state: CaseState | null; open: string | null; running: boolean; onRun: (what: 'stale' | 'all' | DataflowState) => void }) {
   const [shown, setShown] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -22,11 +73,10 @@ export function CaseSwitcher({ state, open, running, onOpen, onRun }: { state: C
   }, [shown]);
   const dataflows = state?.dataflows ?? [];
   const stale = toRun(dataflows, false);
-  const at = dataflows.findIndex((d) => d.dataflow === open);
   return (
     <div className="relative" ref={box} onKeyDown={(e) => e.key === 'Escape' && shown && (e.stopPropagation(), setShown(false))}>
-      <Button size="sm" variant="outline" className="h-6 gap-1 px-2" onClick={() => setShown((s) => !s)} data-slot="case-switch" title="The case's dataflows in run order: open another, run one, what's out of date, or all">
-        {at >= 0 && dataflows.length > 0 ? `${at + 1} of ${dataflows.length}` : 'Dataflows'}
+      <Button size="sm" variant="outline" className="h-6 gap-1 px-2" onClick={() => setShown((s) => !s)} data-slot="case-switch" title="Run one of the case's dataflows, what's out of date, or all, in order">
+        <Play className="size-3" /> Run
         {stale.length > 0 && <span className="text-warning">· {stale.length} out of date</span>}
         <ChevronDown className="size-3" />
       </Button>
@@ -56,9 +106,6 @@ export function CaseSwitcher({ state, open, running, onOpen, onRun }: { state: C
                 )}
               </div>
               <div className="flex gap-1">
-                <Button size="sm" variant="outline" className="h-6 px-2" disabled={d.dataflow === open} onClick={() => (onOpen(d), setShown(false))} data-slot="case-open">
-                  Open
-                </Button>
                 <Button size="sm" variant="outline" className="h-6 px-2" disabled={running} onClick={() => onRun(d)} title={`Run ${d.name} alone: those below it aren't run`} data-slot="case-run-one">
                   <Play className="size-3" /> Run
                 </Button>
