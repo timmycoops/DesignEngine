@@ -259,10 +259,15 @@ export function journeyOf(steps: ColumnStep[], at: number, unit: number, volume 
 
 /** The last step up to `at` that wrote a unit's field: the step that made it, or the last that moved its value; none, as read. */
 export function lastWriter(steps: ColumnStep[], at: number, unit: number, field: string): string | null {
+  return lastWriterAt(steps, at, unit, field)?.name ?? null;
+}
+
+/** The last step at or before `at` to write a field on a unit, by number and name; null for a value as read. */
+export function lastWriterAt(steps: ColumnStep[], at: number, unit: number, field: string): { step: number; name: string } | null {
   for (let s = Math.min(at, steps.length - 1); s > 0; s--) {
     const now = steps[s].units.find((u) => u.id === unit);
     const was = steps[s - 1].units.find((u) => u.id === unit);
-    if (now && (!was || moved(was.values[field], now.values[field]))) return steps[s].step;
+    if (now && (!was || moved(was.values[field], now.values[field]))) return { step: s, name: steps[s].step };
   }
   return null;
 }
@@ -301,4 +306,79 @@ export function rowWords(r: PieceRow): string {
   const u = r.after ?? r.before!;
   const how = { kept: '', split: ` · split off ${r.other ? unitWords(r.other) : ''}`, joined: ' · joined', new: ' · new', gone: r.other ? ` · into ${unitWords(r.other)}` : ' · taken away' }[r.how];
   return `${unitWords(u)}${u.became ? `, ${u.became}` : ''}${how}`;
+}
+
+/**
+ * A field named as a path (`Waste\Topsoil\Prime Volume`): its heading (Waste › Topsoil) and its short name (Prime
+ * Volume), so the picked unit lists it under its heading without wrapping (Case setup and unit plan, decision 7). A
+ * plain name has no heading.
+ */
+export function fieldPath(name: string): { path: string | null; short: string } {
+  const parts = name.split('\\').filter((p) => p.length > 0);
+  if (parts.length < 2) return { path: null, short: name };
+  return { path: parts.slice(0, -1).join(' › '), short: parts[parts.length - 1] };
+}
+
+/** A field of the picked unit, as its sheet shows it. */
+export interface PieceField {
+  name: string;
+  short: string;
+  unit: string;
+  before: number | null;
+  after: number | null;
+  /** Moved by this step on a unit that was there before it. */
+  changed: boolean;
+  /** "this step", "3 rom_loss" or "as read". */
+  writer: string;
+  /** Written by the step open. */
+  thisStep: boolean;
+}
+
+/** Fields under one heading (a path), or none, in field order. */
+export interface PieceGroup {
+  path: string | null;
+  fields: PieceField[];
+}
+
+/**
+ * The picked unit's sheet (Case setup and unit plan, decisions 5 to 7): whether the step made it (no before), the fields
+ * the step changed first, then the rest, each under its path's heading; fields empty or at nought, unchanged, set aside
+ * to fold. Last written says "this step" for the step open, else its number and name, or "as read".
+ */
+export function pieceSheet(steps: ColumnStep[], at: number, row: PieceRow, fields: ColumnField[]): { made: boolean; changed: PieceGroup[]; rest: PieceGroup[]; quiet: PieceGroup[] } {
+  const u = row.after ?? row.before!;
+  const made = !row.before;
+  const all: PieceField[] = fields.map((f) => {
+    const before = row.before?.values[f.name] ?? null;
+    const after = row.after?.values[f.name] ?? null;
+    const w = lastWriterAt(steps, at, u.id, f.name);
+    return {
+      name: f.name,
+      short: fieldPath(f.name).short,
+      unit: f.unit,
+      before,
+      after,
+      changed: !!row.before && !!row.after && moved(before, after),
+      writer: w === null ? 'as read' : w.step === at ? 'this step' : `${w.step} ${w.name}`,
+      thisStep: w?.step === at,
+    };
+  });
+  const nought = (v: number | null) => v === null || Number.isNaN(v) || v === 0;
+  const quiet = (f: PieceField) => !f.changed && nought(f.after) && nought(f.before);
+  const grouped = (list: PieceField[]): PieceGroup[] => {
+    const out: PieceGroup[] = [];
+    for (const f of list) {
+      const path = fieldPath(f.name).path;
+      const g = out.find((x) => x.path === path);
+      if (g) g.fields.push(f);
+      else out.push({ path, fields: [f] });
+    }
+    return out;
+  };
+  return {
+    made,
+    changed: grouped(all.filter((f) => f.changed)),
+    rest: grouped(all.filter((f) => !f.changed && !quiet(f))),
+    quiet: grouped(all.filter(quiet)),
+  };
 }

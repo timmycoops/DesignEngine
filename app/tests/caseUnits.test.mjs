@@ -3,7 +3,7 @@
 // journey and the field map, on a made-up block at rom_loss. Run with `pnpm test`.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { addUp, changedFields, fieldMap, fieldsOfSet, groupName, journeyOf, lastWriter, piecesOf, rowChanged, unitGroups } from '../src/panels/caseUnits.ts';
+import { addUp, changedFields, fieldMap, fieldPath, fieldsOfSet, groupName, journeyOf, lastWriter, pieceSheet, piecesOf, rowChanged, unitGroups } from '../src/panels/caseUnits.ts';
 
 const fields = [
   { name: 'volume', unit: 'm3', kind: 'volume', add_up: { by: 'sum' } },
@@ -154,4 +154,33 @@ test("a piece's journey, the last step to write each field, and the field map", 
   const map = fieldMap(steps, fields);
   assert.deepEqual([...map[0].reads], ['thickness', 'volume']);
   assert.deepEqual([...map[0].writes].sort(), ['thickness', 'volume']);
+});
+
+test('a field named as a path goes under its heading by its short name (Case setup and unit plan, decision 7)', () => {
+  assert.deepEqual(fieldPath('Waste\\Topsoil\\Prime Volume'), { path: 'Waste › Topsoil', short: 'Prime Volume' });
+  assert.deepEqual(fieldPath('volume'), { path: null, short: 'volume' });
+  assert.deepEqual(fieldPath('Imported\\Coal\\tonnes'), { path: 'Imported › Coal', short: 'tonnes' });
+});
+
+test("the picked unit's sheet: made or kept, changed first, as read or this step, the empty and nought set aside (decisions 5 to 7)", () => {
+  const withWaste = [...fields, { name: 'Waste\\Topsoil\\Prime Volume', unit: 'm3', kind: 'volume' }, { name: 'Waste\\Topsoil\\Total Volume', unit: 'm3', kind: 'volume' }];
+  const rows = piecesOf(steps[0].units, steps[1].units);
+  const names = (groups) => groups.map((g) => [g.path, g.fields.map((f) => f.short)]);
+
+  // U coal kept its id through rom_loss, less its losses: volume and thickness changed, the rest as read.
+  const kept = pieceSheet(steps, 1, rows.find((r) => r.after?.id === 2), withWaste);
+  assert.equal(kept.made, false);
+  assert.deepEqual(names(kept.changed), [[null, ['volume', 'thickness']]]);
+  assert.deepEqual(names(kept.rest), [[null, ['rd', 'ash', 'ash_cutoff']]]);
+  assert.deepEqual(names(kept.quiet), [['Waste › Topsoil', ['Prime Volume', 'Total Volume']]]);
+  const volume = kept.changed[0].fields[0];
+  assert.deepEqual([volume.before, volume.after, volume.writer, volume.thisStep], [6_507, 5_046, 'this step', true]);
+  assert.equal(kept.rest[0].fields[0].writer, 'as read');
+
+  // The roof loss the step made: nothing before it, every field written by this step, none "changed".
+  const made = pieceSheet(steps, 1, rows.find((r) => r.after?.id === 10), withWaste);
+  assert.equal(made.made, true);
+  assert.deepEqual(made.changed, []);
+  assert.deepEqual(names(made.rest), [[null, ['volume', 'thickness', 'rd', 'ash', 'ash_cutoff']]]);
+  assert.ok(made.rest[0].fields.every((f) => f.writer === 'this step' && f.before === null));
 });

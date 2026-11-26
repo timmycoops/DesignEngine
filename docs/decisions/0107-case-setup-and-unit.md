@@ -71,7 +71,28 @@ no new dependency.
   again; Done and Esc back to the case as it was. 63 of 63 pass, none dropped (a settings table read for 53 settings, 53
   listed on the click).
 
+### Workstream 2: the picked unit (decisions 5 to 8)
+
+- `caseUnits.ts`: `pieceSheet` lays out the picked unit's fields: whether the step made it, the fields it changed (moved
+  on a unit there before it), the rest, and those empty or at nought and unchanged set aside; each field's Last written
+  is "this step", the step's number and name, or "as read" (`lastWriterAt`, which `lastWriter` now reads); `fieldPath`
+  splits a name written as a path (`Waste\Topsoil\Prime Volume`) into its heading (Waste › Topsoil) and short name.
+- `UnitsTable.tsx`: the picked unit opens in a row of its own under the first row of it (`picked-piece-row`), across the
+  table, held at the left as the table scrolls sideways. Its title names the unit, the block and the step ("U 110 ·
+  Pit / 3 / B5 · step 10 rom_loss"); the heads say Before and After that step, Before left out for a unit the step made
+  ("Made by this step: nothing before it"); the changed fields first, lit, under "Changed by this step", then the rest;
+  path fields under their heading by short name, no name wrapping; "N more, empty or nought" folded; Last written dimmed
+  for this step; the fields run in columns 30 rem wide as the width allows, its journey beside them. × or Esc closes it.
+  The 18 rem pane beside the table is gone.
+- Tests: `fieldPath` and `pieceSheet` in `caseUnits.test.mjs` on the made-up block at rom_loss (U coal kept: volume and
+  thickness changed, 6,507 → 5,046 m³ by this step, rd as read, two empty waste fields folded under Waste › Topsoil; the
+  roof loss made by the step: no Before, every field by this step). The case bench adds: the picked unit under its row
+  and across the table; its title naming unit, block and step; a unit the step made with no Before and every field by
+  this step; no field name wrapping; Esc closing it. 68 of 68 pass, none dropped. The demo's fields hold no paths, so
+  the heading is checked by the unit test alone.
+
 ## Known limits
 
 - Not tried by hand.
 - The fold is by count alone: a list of 13 short names folds as one of 50 does.
+- The picked unit's columns of fields have one head row, over the first.
