@@ -4,9 +4,9 @@ import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
-import { ALWAYS_ROW, chordTools, choiceTool, choiceWords, findGroups, findScore, findWords, inUse, menuTools, menuWords, panelTool, rowName, ROWS, rowTools, STAGES, stageTools, stepTools, tipOf, toolByKey, TOOLS } from '../src/tools.ts';
-import { rememberStage, stageOf } from '../src/workspace/stage.ts';
-import { PANELS } from '../src/workspace/panels.ts';
+import { ALWAYS_ROW, sideOfStage, PROJECT_MENU, itemTools, EDIT_ROW, chordTools, choiceTool, choiceWords, findGroups, findScore, findWords, inUse, menuTools, menuWords, panelTool, rowName, ROWS, rowTools, STAGES, stageTools, stepTools, tipOf, toolByKey, TOOLS } from '../src/tools.ts';
+import { rememberSide, rememberStage, sideOf, stageOf } from '../src/workspace/stage.ts';
+import { PANELS, panelSide } from '../src/workspace/panels.ts';
 import { CANVAS_TOOLS } from '../src/panels/workflowTools.ts';
 
 /** Every command the engine names: `const NAME: &'static str = "…";` under crates/zd-commands. */
@@ -26,10 +26,11 @@ function engineCommands() {
 test('every tool is listed once, in one stage', () => {
   const keys = TOOLS.map((t) => t.key);
   assert.equal(new Set(keys).size, keys.length, 'a key twice');
-  const stages = new Set([...STAGES.map((s) => s.id), 'always']);
+  const stages = new Set([...STAGES.map((s) => s.id), 'project', 'tables', 'always']);
   for (const tool of TOOLS) assert.ok(stages.has(tool.stage), `${tool.key} is in ${tool.stage}, which is no stage`);
-  for (const { id } of STAGES) assert.ok(stageTools(id).length > 0, `${id} has no tools`);
-  assert.equal(STAGES.map((s) => s.title).join(' · '), 'Project · Strings · Walls · Solids · Geology · Reserves');
+  for (const id of [...STAGES.map((s) => s.id), 'project', 'tables']) assert.ok(stageTools(id).length > 0, `${id} has no tools`);
+  // The Design side's groups, a ribbon tab each (decision 0108).
+  assert.equal(STAGES.map((s) => s.title).join(' · '), 'Strings · Walls · Surfaces · Solids · Geology');
 });
 
 test('every tool opens a panel that exists or names an action, and says what it does', () => {
@@ -60,10 +61,10 @@ test('every panel has one tool that opens it as it stands, under its own name', 
   assert.throws(() => panelTool('nothing'));
 });
 
-test('every stage has a row of tools that exist, named in words', () => {
-  for (const { id } of STAGES) {
-    assert.ok(ROWS[id].length > 0, id);
-    for (const item of ROWS[id]) {
+test('every row holds tools that exist, named in words, and each tool is on one row only', () => {
+  const rowIds = [...STAGES.map((s) => s.id), 'tables'];
+  const check = (id, items) => {
+    for (const item of items) {
       if (item === '|') continue;
       if (typeof item === 'string') {
         assert.ok(toolByKey(item), `${id} row: no tool ${item}`);
@@ -74,67 +75,78 @@ test('every stage has a row of tools that exist, named in words', () => {
         for (const key of item.keys ?? []) assert.ok(toolByKey(key)?.menu, `${id} row, ${item.label}: ${key} has no words for a menu`);
       }
     }
-    assert.notEqual(ROWS[id][0], '|');
-    assert.notEqual(ROWS[id].at(-1), '|');
+    assert.notEqual(items[0], '|');
+    assert.notEqual(items.at(-1), '|');
+  };
+  for (const id of rowIds) {
+    assert.ok(ROWS[id].length > 0, id);
+    check(id, ROWS[id]);
   }
-  const names = (stage) => ROWS[stage].filter((i) => typeof i === 'string' && i !== '|').map((key) => rowName(toolByKey(key)));
-  assert.deepEqual(names('solids'), ['Between surfaces', 'Strips by faces', 'By surface or RL', 'By seams', 'By benches', 'By blocks', 'Objects table', 'Repair', 'Move', 'Rotate', 'Mirror']);
-  assert.deepEqual(names('project'), ['New', 'Save as', 'Relink geology', 'Licence']);
-  // Open is a menu on the row: a project, or an older project folder.
-  assert.deepEqual(ROWS.project.filter((i) => typeof i !== 'string').map((m) => m.label), ['Open', 'Import', 'Export']);
-  assert.deepEqual(names('geology'), ['Import seam grids', 'Suggest definition', 'Build seam model', 'Relink geology']);
-  assert.deepEqual(names('reserves'), ['Reserves', 'Reserves case', 'Parameters', 'Tables', 'Compare', 'Compare', 'Report']);
-  assert.deepEqual(names('walls'), ['Face design', 'Builder', 'Rebuild from here', 'Ramp', 'Set grade', 'Offset', 'Project', 'Surface between', 'Join faces', 'Compare', 'Merge', 'Trim plan', 'Triangulate']);
-  assert.deepEqual(names('strings'), ['Offset', 'Number across', 'Polygons from lines', 'Set grade', 'Set elevation', 'Drape', 'Project', 'Split', 'Trim', 'Extend', 'Clip', 'Union', 'Join', 'Round corners', 'Smooth', 'Filter', 'Densify', 'At crossings', 'Reverse', 'Close', 'Where they meet', 'Contours', 'Outline', 'Section strings', 'Move', 'Rotate', 'Mirror']);
+  check('edit', EDIT_ROW);
+  // Each tool on one row (decision 0108): no tool on two groups' rows, nor on a row and the edit tools at its end.
+  const placed = [...rowIds.flatMap((id) => ROWS[id]), ...EDIT_ROW].filter((i) => typeof i === 'string' && i !== '|');
+  assert.deepEqual(placed.filter((k, n) => placed.indexOf(k) !== n), [], 'a tool on two rows');
+  const names = (items) => items.filter((i) => typeof i === 'string' && i !== '|').map((key) => rowName(toolByKey(key)));
+  assert.deepEqual(names(ROWS.strings), ['Offset', 'Number across', 'Polygons from lines', 'Set grade', 'Set elevation', 'Drape', 'Project', 'Split', 'Trim', 'Extend', 'Clip', 'Union', 'Join', 'Round corners', 'Smooth', 'Filter', 'Densify', 'At crossings', 'Reverse', 'Close', 'Where they meet', 'Contours', 'Outline', 'Section strings']);
+  assert.deepEqual(names(ROWS.walls), ['Face design', 'Builder', 'Rebuild from here', 'Ramp', 'Join faces']);
+  assert.deepEqual(names(ROWS.surfaces), ['Compare', 'Merge', 'Trim plan', 'Triangulate', 'Surface between']);
+  assert.deepEqual(names(ROWS.solids), ['Between surfaces', 'Strips by faces', 'By surface or RL', 'By seams', 'By benches', 'By blocks', 'Objects table', 'Repair']);
+  assert.deepEqual(names(ROWS.geology), ['Import seam grids', 'Suggest definition', 'Build seam model', 'Relink geology', 'Interrogate', 'Compare blocks']);
+  assert.deepEqual(names(ROWS.tables), ['Reserves case', 'Tables', 'Parameters']);
+  assert.deepEqual(names(EDIT_ROW), ['Move', 'Rotate', 'Mirror', 'Delete']);
+  // The project menu: the project's files, Open, Import and Export as menus within it, and the machine's settings.
+  assert.deepEqual(names(PROJECT_MENU), ['New', 'Save as', 'Licence', 'View controls']);
+  assert.deepEqual(PROJECT_MENU.filter((i) => typeof i !== 'string').map((m) => m.label), ['Open', 'Import', 'Export']);
 });
 
-test("a stage's tools are on its row, but for the few reached another way", () => {
+test("a group's tools are on its row, but for the few reached another way", () => {
   const elsewhere = [];
-  for (const { id } of STAGES) {
+  for (const id of [...STAGES.map((s) => s.id), 'tables']) {
     const onRow = new Set(rowTools(id).map((t) => t.key));
     for (const tool of stageTools(id)) if (!onRow.has(tool.key)) elsewhere.push(tool.key);
   }
-  // Build a step and Interrogate are what Builder and Reserves open
-  // on, listed for the canvas; Cut solids as it stands is in the Panels menu, its six choices on the row.
-  // Strings as it stands is in the Panels menu too, its thirteen tools on the row; so is Strings from surfaces, its four
-  // on the row (String tools plan, workstream 5).
-  assert.deepEqual(elsewhere.sort(), ['builder:step', 'cut', 'from_surfaces', 'reserves:interrogate', 'strings', 'surfaces']);
-  // A row shows a tool from another stage only where the plan has it: Relink geology on Project, and the Import and
-  // Export menus there, which gather their tools from every stage.
-  const visiting = STAGES.flatMap(({ id }) => rowTools(id).filter((t) => t.stage !== id && t.stage !== 'always').map((t) => `${id}: ${t.key}`));
-  // Relink geology is there twice: in the Import menu, as it always was, and on the row.
-  assert.deepEqual([...new Set(visiting)].sort(), [
-    'project: export.selected_solids',
-    'project: export.visible_solids',
-    'project: import.solids',
-    'project: import.solids_folder',
-    'project: import.solids_folder_repaired',
-    'project: import.solids_repaired',
-    'project: import.vulcan_grid',
-    'project: seam.build',
-    'project: seam.relink',
-    'project: seam.suggest',
-    // Compare surfaces is on Reserves too (Surface tools plan, decision 5).
-    'reserves: surfaces:compare',
-    // The string tools a ramp is made from by hand are on Walls too (decision 0079).
-    'walls: strings:offset',
-    'walls: strings:project',
-    'walls: strings:set_grade',
-  ]);
+  // Build a step is what Builder opens on, listed for the canvas; Cut solids, Strings, Strings from surfaces, Surfaces and
+  // Reserves as they stand are in the Panels menu, their choices on the rows.
+  assert.deepEqual(elsewhere.sort(), ['builder:step', 'cut', 'from_surfaces', 'reserves', 'strings', 'surfaces']);
+  // A row shows a tool of another group only through its menus: the Solids row's own imports and exports are the
+  // project menu's too.
+  const visiting = [...STAGES.map((s) => s.id), 'tables'].flatMap((id) => rowTools(id).filter((t) => t.stage !== id && t.stage !== 'always').map((t) => `${id}: ${t.key}`));
+  assert.deepEqual([...new Set(visiting)].sort(), []);
+  // Everything in the project menu belongs to the project, or is an import or export of one of the groups.
+  const menu = itemTools(PROJECT_MENU);
+  for (const tool of menu) assert.ok(tool.stage === 'project' || tool.menu?.in === 'import' || tool.menu?.in === 'export' || tool.menu?.in === 'open', tool.key);
 });
 
-test('every tool on the old one row is one click from its stage, and every import and export from Project', () => {
-  const opens = (stage, panel) => ROWS[stage].some((item) => typeof item === 'string' && item !== '|' && toolByKey(item).panel === panel);
+test('every tool on the old one row is one click from its group or side, and every import and export from the project menu', () => {
+  const opens = (row, panel) => ROWS[row].some((item) => typeof item === 'string' && item !== '|' && toolByKey(item).panel === panel);
   assert.ok(opens('walls', 'face') && opens('walls', 'builder'));
   assert.ok(opens('solids', 'cut') && opens('solids', 'restable'));
-  assert.ok(opens('reserves', 'reserves') && opens('reserves', 'restable') && opens('reserves', 'params'));
+  assert.ok(opens('geology', 'reserves'));
+  assert.ok(opens('tables', 'case') && opens('tables', 'restable') && opens('tables', 'params'));
   assert.deepEqual(ALWAYS_ROW, ['workflow']);
-  const project = new Set(rowTools('project').map((t) => t.key));
-  for (const tool of [...menuTools('import'), ...menuTools('export')]) assert.ok(project.has(tool.key), tool.key);
+  const project = new Set(itemTools(PROJECT_MENU).map((t) => t.key));
+  for (const tool of [...menuTools('open'), ...menuTools('import'), ...menuTools('export')]) assert.ok(project.has(tool.key), tool.key);
   assert.equal(tipOf(toolByKey('cut')), 'Cut solids: into strips by faces, by a surface, grid or RL, or one between two surfaces');
   assert.equal(tipOf(toolByKey('project.save')), 'Save (Ctrl+S)');
   assert.equal(tipOf(toolByKey('edit.undo')), 'Undo (Ctrl+Z)');
   assert.equal(tipOf(toolByKey('cut:seams')), "Cuts solids by the seam model's horizons, in one run.");
+});
+
+test('a tool is on a side: the Tables side its own, Design the groups, the project menu and what is always there either', () => {
+  assert.equal(sideOfStage('tables'), 'tables');
+  for (const { id } of STAGES) assert.equal(sideOfStage(id), 'design');
+  assert.equal(sideOfStage('project'), null);
+  assert.equal(sideOfStage('always'), null);
+  for (const p of PANELS) {
+    const tool = panelTool(p.id);
+    const side = sideOfStage(tool.stage);
+    if (p.side === 'tables') assert.equal(side, 'tables', `${p.id} is a Tables panel, its tool on Tables`);
+    if (!p.side && side) assert.equal(side, 'design', `${p.id} is a Design panel, its tool on Design`);
+  }
+  assert.deepEqual(PANELS.filter((p) => p.side).map((p) => `${p.id} ${p.side}`), ['restable both', 'case tables', 'params tables']);
+  assert.equal(panelSide('case'), 'tables');
+  assert.equal(panelSide('restable'), 'both');
+  assert.equal(panelSide('builder'), 'design');
 });
 
 test("the tool in use is its panel's own, or the one for what the panel is set to", () => {
@@ -149,23 +161,33 @@ test("the tool in use is its panel's own, or the one for what the panel is set t
   assert.ok(!inUse(toolByKey('project.save'), undefined));
 });
 
-test('the stage is remembered a project, Project for one never opened', () => {
+test('the group and the side are remembered a project: Strings and Design for one never opened', () => {
   const held = new Map();
   const storage = { getItem: (k) => held.get(k) ?? null, setItem: (k, v) => held.set(k, v) };
-  assert.equal(stageOf('D:/pits/a.zdp', storage), 'project');
+  assert.equal(stageOf('D:/pits/a.zdp', storage), 'strings');
   rememberStage('D:/pits/a.zdp', 'solids', storage);
-  rememberStage(null, 'strings', storage);
-  rememberStage('D:/pits/b.zdp', 'reserves', storage);
+  rememberStage(null, 'walls', storage);
+  rememberStage('D:/pits/b.zdp', 'geology', storage);
   assert.equal(stageOf('D:/pits/a.zdp', storage), 'solids');
-  assert.equal(stageOf('D:/pits/b.zdp', storage), 'reserves');
-  assert.equal(stageOf(null, storage), 'strings');
-  rememberStage('D:/pits/a.zdp', 'walls', storage);
-  assert.equal(stageOf('D:/pits/a.zdp', storage), 'walls');
+  assert.equal(stageOf('D:/pits/b.zdp', storage), 'geology');
+  assert.equal(stageOf(null, storage), 'walls');
+  rememberStage('D:/pits/a.zdp', 'surfaces', storage);
+  assert.equal(stageOf('D:/pits/a.zdp', storage), 'surfaces');
   assert.equal(JSON.parse(held.get('zd.ribbon.stage.v1')).length, 3, 'a project once');
-  held.set('zd.ribbon.stage.v1', '[["x","nowhere"],"junk"]');
-  assert.equal(stageOf('x', storage), 'project', 'a stage that is none is not kept');
+  // A project left on a stage there no longer is (Project, Reserves) opens on Strings.
+  held.set('zd.ribbon.stage.v1', '[["x","reserves"],["y","project"],"junk"]');
+  assert.equal(stageOf('x', storage), 'strings');
+  assert.equal(stageOf('y', storage), 'strings');
   held.set('zd.ribbon.stage.v1', 'not json');
-  assert.equal(stageOf('x', storage), 'project');
+  assert.equal(stageOf('x', storage), 'strings');
+
+  assert.equal(sideOf('D:/pits/a.zdp', storage), 'design');
+  rememberSide('D:/pits/a.zdp', 'tables', storage);
+  rememberSide('D:/pits/b.zdp', 'design', storage);
+  assert.equal(sideOf('D:/pits/a.zdp', storage), 'tables');
+  assert.equal(sideOf('D:/pits/b.zdp', storage), 'design');
+  held.set('zd.side.v1', '[["x","sideways"]]');
+  assert.equal(sideOf('x', storage), 'design', 'a side that is none is not kept');
 });
 
 test('the menus read top to bottom as they always have', () => {
@@ -229,7 +251,7 @@ test("a panel's choices take their names and their lines from the list", () => {
 
 test('Find a command lists every tool once, under its own name, a stage at a time', () => {
   const groups = findGroups();
-  assert.deepEqual(groups.map((g) => g.title), ['Project', 'Strings', 'Walls', 'Solids', 'Geology', 'Reserves', 'Always there']);
+  assert.deepEqual(groups.map((g) => g.title), ['Project', 'Strings', 'Walls', 'Surfaces', 'Solids', 'Geology', 'Tables', 'Always there']);
   const keys = groups.flatMap((g) => g.tools.map((t) => t.key));
   assert.deepEqual([...keys].sort(), TOOLS.map((t) => t.key).sort());
   // A tool is found and picked by its name, so no two tools share one.

@@ -7,17 +7,40 @@
  */
 import type { PanelId } from './workspace/panels';
 
-/** The stages of the work, in the order it's done, and `always` for what's there whatever the stage. */
-export type Stage = 'project' | 'strings' | 'walls' | 'solids' | 'geology' | 'reserves' | 'always';
+/**
+ * Where a tool belongs (decision 0108): the project menu, one of the Design side's five groups, the Tables side, or
+ * `always` for what's there whatever the side or group.
+ */
+export type Stage = 'project' | 'strings' | 'walls' | 'surfaces' | 'solids' | 'geology' | 'tables' | 'always';
 
-export const STAGES: readonly { id: Exclude<Stage, 'always'>; title: string }[] = [
-  { id: 'project', title: 'Project' },
+/** The two sides of the app (decision 0108): design work in the view, and table work on to the schedule. */
+export type Side = 'design' | 'tables';
+
+/** The Design side's groups, a tab each on the ribbon, in the order the work is done. */
+export const STAGES: readonly { id: Group; title: string }[] = [
   { id: 'strings', title: 'Strings' },
   { id: 'walls', title: 'Walls' },
+  { id: 'surfaces', title: 'Surfaces' },
   { id: 'solids', title: 'Solids' },
   { id: 'geology', title: 'Geology' },
-  { id: 'reserves', title: 'Reserves' },
 ];
+
+/** A Design group: a ribbon tab. */
+export type Group = 'strings' | 'walls' | 'surfaces' | 'solids' | 'geology';
+
+/** What has a row of tools: each Design group, and the Tables side's one row (until its list, decision 0108 ws4). */
+export type RowId = Group | 'tables';
+
+/** Every stage with a title, for Find a command: the project menu, the groups, the Tables side. */
+const TITLES: Record<Exclude<Stage, 'always'>, string> = {
+  project: 'Project',
+  strings: 'Strings',
+  walls: 'Walls',
+  surfaces: 'Surfaces',
+  solids: 'Solids',
+  geology: 'Geology',
+  tables: 'Tables',
+};
 
 /** The pictures tools are drawn with, by name. */
 export type ToolIcon =
@@ -82,6 +105,8 @@ export type ToolIcon =
   | 'workflow'
   | 'panels'
   | 'more'
+  | 'menu'
+  | 'delete'
   | 'select'
   | 'draw'
   | 'snap'
@@ -253,16 +278,16 @@ export const TOOLS: readonly Tool[] = [
   { key: 'builder:step', stage: 'walls', label: 'Build a step', tip: 'Builds one wall or berm from the line you pick.', panel: 'builder', command: 'face.build_step', step: { takes: 'the line picked' } },
   { key: 'builder:rebuild', stage: 'walls', label: 'Rebuild from here', tip: 'Builds the steps above an edited line again, each with its settings', icon: 'rebuild', panel: 'builder', command: 'face.rebuild' },
   { key: 'strings:ramp_polygon', stage: 'walls', label: 'Ramp from a start', tip: 'Places a ramp from a start, as its polygon.', short: 'Ramp', icon: 'ramp', panel: 'strings', mode: 'ramp_polygon', command: 'string.ramp_polygon' },
-  { key: 'strings:surface_between', stage: 'walls', label: 'Surface between strings', tip: 'Makes one surface between the strings picked.', short: 'Surface between', icon: 'surface-between', panel: 'strings', mode: 'surface_between', command: 'surface.between_strings', step: { takes: 'two strings or more' } },
+  { key: 'strings:surface_between', stage: 'surfaces', label: 'Surface between strings', tip: 'Makes one surface between the strings picked.', short: 'Surface between', icon: 'surface-between', panel: 'strings', mode: 'surface_between', command: 'surface.between_strings', step: { takes: 'two strings or more' } },
   { key: 'cut:join_faces', stage: 'walls', label: 'Join faces', tip: 'Makes one face a strip from up and down faces, several runs or a build’s steps', icon: 'join-faces', panel: 'cut', mode: 'strips', command: 'face.join' },
 
   // Solids. Cut solids' six, in the order the work is done; the panel's own choice keeps its order.
   { key: 'cut', stage: 'solids', label: 'Cut solids', tip: 'into strips by faces, by a surface, grid or RL, or one between two surfaces', icon: 'cut', panel: 'cut' },
-  { key: 'surfaces', stage: 'walls', label: 'Surfaces', tip: 'work on surfaces and grids: compare, merge, trim in plan, triangulate', icon: 'compare-surfaces', panel: 'surfaces' },
-  { key: 'surfaces:compare', stage: 'walls', label: 'Compare surfaces', tip: 'Cut and fill between two surfaces, exact, with a column check.', short: 'Compare', icon: 'compare-surfaces', panel: 'surfaces', mode: 'compare', command: 'surface.compare', step: { takes: 'two surfaces or grids, and a closed string or none' } },
-  { key: 'surfaces:merge', stage: 'walls', label: 'Merge surfaces', tip: 'Merges surfaces, grids and solids: the bottom dug out or the top laid on.', short: 'Merge', icon: 'merge-surfaces', panel: 'surfaces', mode: 'merge', command: 'surface.merge', step: { takes: 'the surfaces, grids and solids picked' } },
-  { key: 'surfaces:trim', stage: 'walls', label: 'Trim in plan', tip: 'Trims anything picked to inside or outside a closed string.', short: 'Trim plan', icon: 'trim-in-plan', panel: 'surfaces', mode: 'trim', command: 'object.trim', step: { takes: 'the strings, surfaces, solids and grids picked, and a closed string' } },
-  { key: 'surfaces:triangulate', stage: 'walls', label: 'Triangulate', tip: 'Makes a surface through strings, each segment kept as an edge.', icon: 'triangulate', panel: 'surfaces', mode: 'triangulate', command: 'surface.triangulate', step: { takes: 'the strings picked' } },
+  { key: 'surfaces', stage: 'surfaces', label: 'Surfaces', tip: 'work on surfaces and grids: compare, merge, trim in plan, triangulate', icon: 'compare-surfaces', panel: 'surfaces' },
+  { key: 'surfaces:compare', stage: 'surfaces', label: 'Compare surfaces', tip: 'Cut and fill between two surfaces, exact, with a column check.', short: 'Compare', icon: 'compare-surfaces', panel: 'surfaces', mode: 'compare', command: 'surface.compare', step: { takes: 'two surfaces or grids, and a closed string or none' } },
+  { key: 'surfaces:merge', stage: 'surfaces', label: 'Merge surfaces', tip: 'Merges surfaces, grids and solids: the bottom dug out or the top laid on.', short: 'Merge', icon: 'merge-surfaces', panel: 'surfaces', mode: 'merge', command: 'surface.merge', step: { takes: 'the surfaces, grids and solids picked' } },
+  { key: 'surfaces:trim', stage: 'surfaces', label: 'Trim in plan', tip: 'Trims anything picked to inside or outside a closed string.', short: 'Trim plan', icon: 'trim-in-plan', panel: 'surfaces', mode: 'trim', command: 'object.trim', step: { takes: 'the strings, surfaces, solids and grids picked, and a closed string' } },
+  { key: 'surfaces:triangulate', stage: 'surfaces', label: 'Triangulate', tip: 'Makes a surface through strings, each segment kept as an edge.', icon: 'triangulate', panel: 'surfaces', mode: 'triangulate', command: 'surface.triangulate', step: { takes: 'the strings picked' } },
   { key: 'cut:between', stage: 'solids', label: 'Between surfaces', tip: 'Makes one solid inside a closed string, between two surfaces.', icon: 'between', panel: 'cut', mode: 'between', command: 'solid.between_surfaces', step: { takes: 'a closed string, top and bottom' } },
   { key: 'cut:strips', stage: 'solids', label: 'Strips by faces', tip: 'Slices solids into strips by faces, from the pit out.', icon: 'strips', panel: 'cut', mode: 'strips', command: 'solid.slice_by_faces', step: { takes: 'solids and a face a strip' } },
   { key: 'cut:cut', stage: 'solids', label: 'By surface or RL', tip: 'Cuts solids by a surface, a grid or an RL.', icon: 'cut', panel: 'cut', mode: 'cut', command: 'solid.cut_by_surface', step: { takes: 'solids and a surface, grid or RL' } },
@@ -285,19 +310,19 @@ export const TOOLS: readonly Tool[] = [
   { key: 'seam.relink', stage: 'geology', label: 'Relink geology', tip: 'Points a grid folder at its new place', icon: 'relink', command: 'seam.relink', action: 'seam.relink', menu: { in: 'import', at: 12, name: 'Relink geology…' } },
 
   // Reserves.
-  { key: 'reserves', stage: 'reserves', label: 'Reserves', tip: "interrogate blocks against a seam model, or set them beside Spry's or Deswik's numbers", icon: 'reserves', panel: 'reserves' },
-  { key: 'reserves:interrogate', stage: 'reserves', label: 'Interrogate', tip: "Writes each seam grid's value onto blocks, from a seam model.", panel: 'reserves', mode: 'interrogate', command: 'solid.interrogate', step: { takes: 'blocks and a seam model' } },
-  { key: 'reserves:compare', stage: 'reserves', label: 'Compare', tip: "Sets blocks beside Spry's or Deswik's numbers.", icon: 'compare', panel: 'reserves', mode: 'compare', command: 'solid.compare' },
-  { key: 'case', stage: 'reserves', label: 'Reserves case', tip: "a reserves table's case a step at a time: the steps by stage, what each reads and does to the whole case, its settings by seam and ply to change and see the case run again, the block map and a block's strip log", icon: 'case', panel: 'case' },
-  { key: 'params', stage: 'reserves', label: 'Parameters', tip: 'parameter tables and dataflows edited as grids, a picked solid\'s values marked where they come from', icon: 'parameters', panel: 'params' },
-  { key: 'restable', stage: 'reserves', label: 'Tables', tip: "every table: the objects, and each reserves table's leaves as a grid grouped by strip, block or seam, or a node's fields broken down from Imported to Scheduled", icon: 'reserves-table', panel: 'restable' },
-  { key: 'workflow:report', stage: 'reserves', label: 'Report', tip: "Writes a workflow's report, every case from its latest run", icon: 'report', panel: 'workflow' },
+  { key: 'reserves', stage: 'geology', label: 'Reserves', tip: "interrogate blocks against a seam model, or set them beside Spry's or Deswik's numbers", icon: 'reserves', panel: 'reserves' },
+  { key: 'reserves:interrogate', stage: 'geology', label: 'Interrogate', icon: 'reserves', tip: "Writes each seam grid's value onto blocks, from a seam model.", panel: 'reserves', mode: 'interrogate', command: 'solid.interrogate', step: { takes: 'blocks and a seam model' } },
+  { key: 'reserves:compare', stage: 'geology', label: 'Compare', short: 'Compare blocks', tip: "Sets blocks beside Spry's or Deswik's numbers.", icon: 'compare', panel: 'reserves', mode: 'compare', command: 'solid.compare' },
+  { key: 'case', stage: 'tables', label: 'Reserves case', tip: "a reserves table's case a step at a time: the steps by stage, what each reads and does to the whole case, its settings by seam and ply to change and see the case run again, the block map and a block's strip log", icon: 'case', panel: 'case' },
+  { key: 'params', stage: 'tables', label: 'Parameters', tip: 'parameter tables and dataflows edited as grids, a picked solid\'s values marked where they come from', icon: 'parameters', panel: 'params' },
+  { key: 'restable', stage: 'tables', label: 'Tables', tip: "every table: the objects, and each reserves table's leaves as a grid grouped by strip, block or seam, or a node's fields broken down from Imported to Scheduled", icon: 'reserves-table', panel: 'restable' },
+  { key: 'workflow:report', stage: 'always', label: 'Report', tip: "Writes a workflow's report, every case from its latest run", icon: 'report', panel: 'workflow' },
 
   // Always there, whatever the stage.
   { key: 'project.save', stage: 'always', label: 'Save', tip: 'Saves the project', icon: 'save', shortcut: 'Ctrl+S', action: 'project.save' },
   { key: 'edit.undo', stage: 'always', label: 'Undo', tip: 'Takes back the last change', icon: 'undo', shortcut: 'Ctrl+Z', action: 'edit.undo', needs: 'undo' },
   { key: 'edit.redo', stage: 'always', label: 'Redo', tip: 'Puts back the change just undone', icon: 'redo', shortcut: 'Ctrl+Y', action: 'edit.redo', needs: 'redo' },
-  { key: 'edit.delete', stage: 'always', label: 'Delete what is selected', tip: 'Deletes everything selected, in one undo', shortcut: 'Delete', action: 'edit.delete', needs: 'selected' },
+  { key: 'edit.delete', stage: 'always', label: 'Delete what is selected', short: 'Delete', icon: 'delete', tip: 'Deletes everything selected, in one undo', shortcut: 'Delete', action: 'edit.delete', needs: 'selected' },
   // Move and copy (String tools plan, workstream 3): on strings, surfaces, solids and grids, so always there, and on the
   // Strings and Solids rows.
   { key: 'move', stage: 'always', label: 'Move and copy', tip: 'move, copy, rotate or mirror the strings, surfaces, solids and grids picked, whole', icon: 'move', panel: 'move' },
@@ -321,7 +346,7 @@ export const TOOLS: readonly Tool[] = [
   { key: 'view.zoom_selection', stage: 'always', label: "Zoom to what's selected", tip: "From the way you're looking", icon: 'zoom-selection', shortcut: 'F', action: 'view.zoom_selection' },
   { key: 'view.zoom_all', stage: 'always', label: 'Zoom to everything', tip: 'The whole project in the view', icon: 'zoom-all', shortcut: 'E', action: 'view.zoom_all' },
   { key: 'view.section', stage: 'always', label: 'Section', tip: 'Pick two points for a true vertical slice, or close the one open', icon: 'section', shortcut: '2', action: 'view.section' },
-  { key: 'viewcontrols', stage: 'always', label: 'View controls', tip: "How the mouse and keys move the view: Spry's mouse layout or ours, and the view's keys", icon: 'view-controls', panel: 'viewcontrols' },
+  { key: 'viewcontrols', stage: 'project', label: 'View controls', tip: "How the mouse and keys move the view: Spry's mouse layout or ours, and the view's keys", icon: 'view-controls', panel: 'viewcontrols' },
   { key: 'view.measure', stage: 'always', label: 'Measure distance', tip: 'The distance, RL difference, grade and bearing between clicks; click on for a running total', icon: 'measure', shortcut: 'M', action: 'view.measure' },
 ];
 
@@ -379,17 +404,20 @@ export type RowItem = string | '|' | RowMenu;
 
 const OPEN_MENU: RowMenu = { label: 'Open', icon: 'open', tip: 'Open a project (.zdp), or an older project folder (.zdproj), which saves as a .zdp beside it', menu: 'open' };
 const IMPORT_MENU: RowMenu = { label: 'Import', icon: 'import', tip: 'Bring in surfaces, grids, strings, solids, Deswik and Spry, and build a seam model', menu: 'import' };
-/** Move, Copy, Rotate and Mirror: on the Strings row and the Solids row, as they work on both (and on surfaces and grids). */
-const MOVE_TOOLS = ['move:move', 'move:rotate', 'move:mirror'] as const;
-const EXPORT_MENU: RowMenu ={ label: 'Export', icon: 'export', tip: 'Strings, surfaces and solids out to DXF, CSV or a zip', menu: 'export' };
+const EXPORT_MENU: RowMenu = { label: 'Export', icon: 'export', tip: 'Strings, surfaces and solids out to DXF, CSV or a zip', menu: 'export' };
 
 /**
- * The row of tools under each stage's tab, left to right, in the order the work is done (decision 0076). A tool is in
- * one stage, but a row may show one from another where the work wants it there too: Relink geology on Project, and on
- * Walls the string tools a ramp is made from by hand (decision 0079): Set grade, Offset and Project.
+ * The project menu (☰, decision 0108): the project's files, what comes in and goes out, and the settings kept on this
+ * machine, top to bottom, a rule between each lot. Never a row of its own.
  */
-export const ROWS: Record<Exclude<Stage, 'always'>, readonly RowItem[]> = {
-  project: ['project.new', OPEN_MENU, 'project.save_as', '|', IMPORT_MENU, EXPORT_MENU, '|', 'seam.relink', '|', 'licence'],
+export const PROJECT_MENU: readonly RowItem[] = ['project.new', OPEN_MENU, 'project.save_as', '|', IMPORT_MENU, EXPORT_MENU, '|', 'licence', 'viewcontrols'];
+
+/**
+ * The row under each Design group's tab, left to right in the order the work is done, and the Tables side's one row
+ * (decision 0108). Each tool is on one row; what works on everything (Move, Rotate, Mirror, Delete) is at the end of
+ * every Design row instead (`EDIT_ROW`).
+ */
+export const ROWS: Record<RowId, readonly RowItem[]> = {
   strings: [
     'strings:offset',
     'strings:number_across',
@@ -418,10 +446,9 @@ export const ROWS: Record<Exclude<Stage, 'always'>, readonly RowItem[]> = {
     'from_surfaces:contours',
     'from_surfaces:outline',
     'from_surfaces:from_section',
-    '|',
-    ...MOVE_TOOLS,
   ],
-  walls: ['face', 'builder', 'builder:rebuild', '|', 'strings:ramp_polygon', 'strings:set_grade', 'strings:offset', 'strings:project', 'strings:surface_between', '|', 'cut:join_faces', '|', 'surfaces:compare', 'surfaces:merge', 'surfaces:trim', 'surfaces:triangulate'],
+  walls: ['face', 'builder', 'builder:rebuild', '|', 'strings:ramp_polygon', '|', 'cut:join_faces'],
+  surfaces: ['surfaces:compare', 'surfaces:merge', 'surfaces:trim', 'surfaces:triangulate', '|', 'strings:surface_between'],
   solids: [
     'cut:between',
     'cut:strips',
@@ -435,20 +462,26 @@ export const ROWS: Record<Exclude<Stage, 'always'>, readonly RowItem[]> = {
     '|',
     { label: 'Import solids', icon: 'solids-in', tip: 'Closed triangulations in Vulcan .00t or DXF files, or a zip or folder of them', keys: ['import.solids', 'import.solids_folder', 'import.solids_repaired', 'import.solids_folder_repaired'] },
     { label: 'Export solids', icon: 'solids-out', tip: 'Solids out as a zip or a folder, a DXF each', keys: ['export.selected_solids', 'export.visible_solids'] },
-    // Last, so on a narrow window they fold into More before the solids' own menus do.
-    '|',
-    ...MOVE_TOOLS,
   ],
-  geology: ['import.vulcan_grid', 'seam.suggest', 'seam.build', 'seam.relink'],
-  reserves: ['reserves', 'case', 'params', 'restable', 'reserves:compare', 'surfaces:compare', 'workflow:report'],
+  geology: ['import.vulcan_grid', 'seam.suggest', 'seam.build', 'seam.relink', '|', 'reserves:interrogate', 'reserves:compare'],
+  // Until the Tables side has its list down the left (decision 0108, workstream 4).
+  tables: ['case', 'restable', 'params'],
 };
 
-/** At the right of every row, whatever the stage. */
+/** At the end of every Design row: what works on whatever is picked, strings, surfaces, solids and grids alike. */
+export const EDIT_ROW: readonly string[] = ['move:move', 'move:rotate', 'move:mirror', 'edit.delete'];
+
+/** At the right of every Design row, whatever the group. */
 export const ALWAYS_ROW: readonly string[] = ['workflow'];
 
 /** The tools a row holds, its menus' tools among them: what's one click, or two through a menu, from its tab. */
-export function rowTools(stage: Exclude<Stage, 'always'>): Tool[] {
-  return ROWS[stage].flatMap((item) => {
+export function rowTools(stage: RowId): Tool[] {
+  return itemTools(ROWS[stage]);
+}
+
+/** The tools a list of row items holds, a menu's tools among them. */
+export function itemTools(items: readonly RowItem[]): Tool[] {
+  return items.flatMap((item) => {
     if (item === '|') return [];
     if (typeof item === 'string') return [toolByKey(item)!];
     return item.menu ? menuTools(item.menu) : (item.keys ?? []).map((key) => toolByKey(key)!);
@@ -475,7 +508,7 @@ export function menuWords(tool: Tool, count: number | null): string {
 }
 
 /** A stage's name, and Always there for what isn't in one. */
-export const stageTitle = (stage: Stage): string => STAGES.find((s) => s.id === stage)?.title ?? 'Always there';
+export const stageTitle = (stage: Stage): string => (stage === 'always' ? 'Always there' : TITLES[stage]);
 
 /** What Find a command matches a tool by, besides its name: its other names, its stage, what it does and its command. */
 export const findWords = (tool: Tool): string[] =>
@@ -507,8 +540,12 @@ export function findScore(tool: Tool, typed: string): number {
   return score;
 }
 
-/** Every tool for Find a command, a stage at a time in the order the work is done, then what's always there. */
-export const findGroups = (): { title: string; tools: Tool[] }[] => [...STAGES.map((s) => s.id), 'always' as const].map((stage) => ({ title: stageTitle(stage), tools: stageTools(stage) }));
+/** Every tool for Find a command: the project menu, each Design group in the order the work is done, the Tables side, then what's always there. */
+export const findGroups = (): { title: string; tools: Tool[] }[] =>
+  (['project', ...STAGES.map((s) => s.id), 'tables', 'always'] as const).map((stage) => ({ title: stageTitle(stage), tools: stageTools(stage) }));
+
+/** The side a tool's work is on: the Tables side's own, or Design for the rest (the project menu and what's always there go with either). */
+export const sideOfStage = (stage: Stage): Side | null => (stage === 'tables' ? 'tables' : stage === 'project' || stage === 'always' ? null : 'design');
 
 /** The tools that can add a step to a workflow, for the canvas. */
 export const stepTools = (): (Tool & { panel: PanelId; command: string; step: { takes: string } })[] =>

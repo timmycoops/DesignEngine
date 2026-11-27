@@ -78,10 +78,13 @@ shortcut on its own (`docs/decisions/0080-right-click-esc-and-two-letter-shortcu
 one line of what it does (`PanelHead`), and its first control is within 40 px of the tab. Every tool is listed once in
 `app/src/tools.ts`, in its stage, with its name, what it does, and the panel it opens or the action App carries out;
 the toolbar, its menus, the Panels menu and the workflow canvas are drawn from the list, so a new tool is added there
-(and its action to App's table), never as a button of its own. The ribbon (`app/src/workspace/Ribbon.tsx`) is a tab a
-stage (Project · Strings · Walls · Solids · Geology · Reserves) over the row of that stage's tools, named in words;
-the rows are `ROWS` in the tool list, a row too long folds into More, the tool in use is lit, and switching stage
-changes the row only. A new tool goes on its stage's row there. Find a command (Ctrl+K, `FindCommand.tsx`) searches
+(and its action to App's table), never as a button of its own. The ribbon (`app/src/workspace/Ribbon.tsx`, decision 0108)
+has along its top the project menu (`PROJECT_MENU`), the Design or Tables switch (`showSide` in the workspace, the side
+remembered a project), and on Design a tab a group (Strings · Walls · Surfaces · Solids · Geology) over the row of that
+group's tools, named in words, with `EDIT_ROW` (Move, Rotate, Mirror, Delete) at its end. The rows are `ROWS` in the
+tool list, a row too long folds into More, the tool in use is lit, and switching group changes the row only. A tool is
+on one row; a new tool goes on its group's row there. A panel names its side in `PANELS` (`side`: `tables`, `both`, or
+Design by default): asking for one on the other side switches side. Find a command (Ctrl+K, `FindCommand.tsx`) searches
 the list by whole words, so a tool's name and its line are what it's found by: write them in the words a planner would
 type. Properties shows only: an object's name, look, attributes, measures and history. A command on an object is a tool
 in a panel on the kit, never a row in Properties (the string tools are the Strings panel, which works on every string

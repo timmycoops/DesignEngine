@@ -7,6 +7,12 @@ export type PanelId = 'layers' | 'properties' | 'strings' | 'from_surfaces' | 's
 
 export type Dock = 'left' | 'tools' | 'results';
 
+/**
+ * The side of the app a panel is on (decision 0108): Design for the view's work, Tables for the table work, `both` for
+ * one that moves to whichever side asks for it (the Tables panel: the Objects table on Design, reserves tables on Tables).
+ */
+export type PanelSide = 'design' | 'tables' | 'both';
+
 /** The tool dock's width: one width, so the view is as wide with every tool open as with one. */
 export const TOOL_DOCK_WIDTH = 400;
 
@@ -14,7 +20,7 @@ export const TOOL_DOCK_WIDTH = 400;
  * A dock at a time, with the room each panel asks for there: a width on the left and in the tool dock, and in the
  * results dock the height a table needs, which the dock grows to when it opens.
  */
-export const PANELS: readonly { id: PanelId; title: string; dock: Dock; size: number }[] = [
+export const PANELS: readonly { id: PanelId; title: string; dock: Dock; size: number; side?: PanelSide }[] = [
   { id: 'layers', title: 'Layers', dock: 'left', size: 280 },
   { id: 'properties', title: 'Properties', dock: 'tools', size: TOOL_DOCK_WIDTH },
   { id: 'strings', title: 'Strings', dock: 'tools', size: TOOL_DOCK_WIDTH },
@@ -30,10 +36,13 @@ export const PANELS: readonly { id: PanelId; title: string; dock: Dock; size: nu
   { id: 'runlog', title: 'Run log', dock: 'results', size: 200 },
   // Every table, the objects and each reserves table (Tables and scripts plan, decision 1). Kept the Reserves table's id,
   // so a saved layout finds it.
-  { id: 'restable', title: 'Tables', dock: 'results', size: 400 },
+  { id: 'restable', title: 'Tables', dock: 'results', size: 400, side: 'both' },
   // A reserves table's case a step at a time (Reserves case plan, decision 8).
-  { id: 'case', title: 'Reserves case', dock: 'results', size: 520 },
-  { id: 'params', title: 'Parameters', dock: 'results', size: 400 },
+  { id: 'case', title: 'Reserves case', dock: 'results', size: 520, side: 'tables' },
+  { id: 'params', title: 'Parameters', dock: 'results', size: 400, side: 'tables' },
   { id: 'canvas', title: 'Workflow canvas', dock: 'results', size: 400 },
   { id: 'face', title: 'Face design', dock: 'results', size: 400 },
 ];
+
+/** The side a panel is on: Design unless the list says otherwise. */
+export const panelSide = (id: string): PanelSide => PANELS.find((p) => p.id === id)?.side ?? 'design';
