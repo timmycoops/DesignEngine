@@ -8,9 +8,11 @@ import {
   type IDockviewHeaderActionsProps,
   type IDockviewPanelHeaderProps,
   themeDark,
+  themeLight,
 } from 'dockview-react';
 import { Maximize2, Minimize2, Minus } from 'lucide-react';
 import { cn } from 'cn';
+import { useLook } from './useLook';
 import { BuilderPanel } from '@/panels/BuilderPanel';
 import { CutPanel } from '@/panels/CutPanel';
 import { FaceDesignPanel } from '@/panels/FaceDesignPanel';
@@ -439,6 +441,7 @@ function Strip({ edge, groups, api }: { edge: Edge; groups: Minimised[]; api: Do
  * to a strip at the edge of the window, and every panel hidden at once so the viewport fills it.
  */
 export function Workspace({ onReady, onShown }: { onReady: (api: DockviewApi) => void; onShown?: (panels: PanelId[]) => void }) {
+  const look = useLook();
   const told = useRef('');
   const [api, setApi] = useState<DockviewApi | null>(null);
   const [minimised, setMinimised] = useState<Minimised[]>([]);
@@ -518,7 +521,7 @@ export function Workspace({ onReady, onShown }: { onReady: (api: DockviewApi) =>
               tabComponents={tabComponents}
               rightHeaderActionsComponent={GroupActions}
               onReady={ready}
-              theme={themeDark}
+              theme={look === 'dark' ? themeDark : themeLight}
               className="h-full"
             />
           </div>

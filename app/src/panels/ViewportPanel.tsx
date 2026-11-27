@@ -297,7 +297,7 @@ export function ViewportPanel() {
     return () => viewportHost.remove();
   }, [viewportHost, viewportMounted]);
   return (
-    <div className="view-panel relative h-full w-full overflow-hidden bg-[#161e29]">
+    <div className="view-panel relative h-full w-full overflow-hidden bg-[var(--view-background)]">
       <div ref={ref} className="absolute inset-0" />
       <ViewBar />
       <Legends />

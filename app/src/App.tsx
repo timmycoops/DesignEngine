@@ -80,6 +80,7 @@ import { FindCommand } from './workspace/FindCommand';
 import { Ribbon, type StageId } from './workspace/Ribbon';
 import { rememberStage, stageOf } from './workspace/stage';
 import type { ToolUse } from './workspace/ToolMenu';
+import { onLook } from './viewport/look';
 
 interface Status {
   text: string;
@@ -637,6 +638,7 @@ export default function App() {
     if (!hostMounted) return;
     let viewport: Viewport | null = null;
     let detach = () => {};
+    let stopLook = () => {};
     let cancelled = false;
     // In bench mode `--webgl` runs the viewport on WebGL2, so the fallback can be checked where WebGPU is there.
     void benchConfig().then((config) => Viewport.create(viewportHost, { webgl: config?.webgl ?? false })).then(async (created) => {
@@ -701,6 +703,11 @@ export default function App() {
       stringsRef.current = strings;
       roadsRef.current = new RoadLayer(created);
       detach = strings.attach();
+      // A change of look recolours the view's ground, lines and picks as they stand (Two sides plan ws1).
+      stopLook = onLook(() => {
+        created.applyLook();
+        strings.applyLook();
+      });
       show(await projectSummary());
       const config = await benchConfig();
       if (config) {
@@ -714,6 +721,7 @@ export default function App() {
     return () => {
       cancelled = true;
       detach();
+      stopLook();
       viewport?.dispose();
     };
   }, [hostMounted, viewportHost, run, show, onSeams, openSection, select, toggleSelected, boxSelect]);

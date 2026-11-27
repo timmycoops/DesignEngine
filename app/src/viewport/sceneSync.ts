@@ -8,7 +8,8 @@
 // uniforms on its material, so a change of look never refetches anything.
 import * as THREE from 'three/webgpu';
 import { concealed, type Contours, layerOpacityOf, lookOf, type ObjectSummary, type ProjectSummary, type StagedHorizon, stageLayerLevels, stageLayerSolids, stageLevels, stageObject, stageSeamHorizon } from '../bridge';
-import { colourOf, loadLevels, loadStaged, SELECTED } from './load';
+import { colourOf, loadLevels, loadStaged } from './load';
+import { view } from './look';
 import type { SolidFlags } from './solidFlags';
 import { type Bands, bandsFor } from './rlColour';
 import { bandOf } from './bands';
@@ -308,7 +309,7 @@ export class SceneSync {
       return group ? [[o.id, group] as const] : [];
     }));
     for (const [id, group] of this.lit) if (glowing.get(id) !== group) this.viewport.setLit(group, null);
-    for (const [id, group] of glowing) if (this.lit.get(id) !== group) this.viewport.setLit(group, SELECTED);
+    for (const [id, group] of glowing) if (this.lit.get(id) !== group) this.viewport.setLit(group, view.selected);
     this.lit = glowing;
   }
 
@@ -338,7 +339,7 @@ export class SceneSync {
       flags.end();
       let over = this.highlights.get(key);
       if (!over && flags.selectedCount > 0) {
-        over = this.viewport.addSolidHighlight(group, SELECTED) ?? undefined;
+        over = this.viewport.addSolidHighlight(group, view.selected) ?? undefined;
         if (over) this.highlights.set(key, over);
       }
       if (over) over.visible = flags.selectedCount > 0 && (layers.get(id)?.visible ?? true);

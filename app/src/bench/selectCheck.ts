@@ -6,6 +6,7 @@
 // 2 for a section, and E to zoom to everything.
 import * as THREE from 'three/webgpu';
 import { objectsBounds, projectSummary, type ProjectSummary, runCommand, setObjectsVisible, type Vec3 } from '../bridge';
+import { view } from '../viewport/look';
 import type { Viewport } from '../viewport/Viewport';
 
 type Show = (summary: ProjectSummary) => Promise<void> | undefined;
@@ -16,8 +17,8 @@ const N = 7_450_000;
 const SIDE = 20;
 const SPACING = 100;
 const CUBES = 6;
-/** The gold of what's picked (`SELECTED` in load.ts). */
-const GOLD: [number, number, number] = [0xff, 0xd2, 0x3f];
+/** The gold of what's picked, in the look in use (`view.selected`, decision 0108). */
+const gold = (): [number, number, number] => [(view.selected >> 16) & 255, (view.selected >> 8) & 255, view.selected & 255];
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -139,6 +140,7 @@ export async function checkSelect(viewport: Viewport, log: (line: string) => voi
     };
   };
   const colourAt = await snapshot();
+  const GOLD = gold();
   const fromGold = (c: number[]) => Math.hypot(c[0] - GOLD[0], c[1] - GOLD[1], c[2] - GOLD[2]);
   const lit = [1, 2, 3].map((k) => colourAt(screen(topOf(k))));
   const unlit = [0, 4, 5].map((k) => colourAt(screen(topOf(k))));

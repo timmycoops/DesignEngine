@@ -69,8 +69,6 @@ export function loadLevels(viewport: Viewport, group: THREE.Group, stage: () => 
   return next;
 }
 
-/** What is selected shows in this, wherever it is drawn. */
-export const SELECTED = 0xffd23f;
 
 /** A layer's `[r, g, b]` as a three.js colour number. */
 export function colourOf(rgb: [number, number, number]): number {
