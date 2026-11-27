@@ -5,7 +5,8 @@ import { LineSegments2 } from 'three/addons/lines/webgpu/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
 import * as THREE from 'three/webgpu';
 import { type ProjectSummary, type SectionLines, sectionLines, sectionPick, sectionSnap, type SectionKind, type SnapHit, type Vec3 } from '../bridge';
-import { colourOf, SELECTED } from './load';
+import { colourOf } from './load';
+import { view } from './look';
 import { SectionOverview } from './overview';
 import { type GridLines, type SectionFrame, SectionGrid } from './sectionGrid';
 import type { SectionTools } from './strings';
@@ -345,7 +346,7 @@ export class SectionView {
         this.lines.set(key, line);
       }
       const layerColour = layers.get(layer)?.colour;
-      const colour = kind === 'selected' ? SELECTED : (MATERIAL_COLOURS[material] ?? (layerColour ? colourOf(layerColour) : 0xffffff));
+      const colour = kind === 'selected' ? view.selected : (MATERIAL_COLOURS[material] ?? (layerColour ? colourOf(layerColour) : view.ink));
       (line.material as THREE.Line2NodeMaterial).color.setHex(colour);
       line.visible = true;
       if (triangles > 0) this.drawFill(key, fills.slice(fillFrom, fillFrom + triangles * 9), colour);

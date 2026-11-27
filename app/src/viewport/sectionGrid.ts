@@ -3,6 +3,7 @@
 // distance are drawn. The spacing follows the zoom, the same both ways so the grid stays square on a
 // true-scale section, and the labels stay on the screen's edges, the distances under the view bar.
 import { SECTION, SHADE, STEPS, TEXT } from './overview';
+import { view } from './look';
 
 /** The least gap between grid lines on screen (CSS px): wide enough for a distance label. */
 const LEAST_GAP = 64;
@@ -15,7 +16,6 @@ const TAG_CLEAR = 36;
 /** The height of the bottom left corner the plan map takes (CSS px). */
 const MAP_CORNER = 264;
 
-const LINE = 'rgba(255, 255, 255, 0.1)';
 
 /** Where the section camera is looking. */
 export interface SectionFrame {
@@ -116,7 +116,7 @@ export class SectionGrid {
       context.moveTo(sharp(x), 0);
       context.lineTo(sharp(x), h);
     };
-    stroke(LINE, () => {
+    stroke(view.gridLine, () => {
       for (const { x } of along) upright(x);
       for (const { y } of rl) {
         context.moveTo(0, sharp(y));

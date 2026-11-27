@@ -1,6 +1,7 @@
 // A polyline draped on surfaces: a 1 px line plus octahedron handles sized to stay a constant
 // size on screen. Points are in scene-local coordinates.
 import * as THREE from 'three/webgpu';
+import { view } from './look';
 import type { Vec3 } from '../bridge';
 import type { Viewport } from './Viewport';
 
@@ -21,11 +22,11 @@ export class PolylineTool {
     this.positions.setUsage(THREE.DynamicDrawUsage);
     geometry.setAttribute('position', this.positions);
     geometry.setDrawRange(0, 0);
-    this.line = new THREE.Line(geometry, new THREE.LineBasicMaterial({ color: 0xffd23f, depthTest: false }));
+    this.line = new THREE.Line(geometry, new THREE.LineBasicMaterial({ color: view.selected, depthTest: false }));
     this.line.renderOrder = 10;
     this.line.frustumCulled = false;
 
-    const handleMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false });
+    const handleMaterial = new THREE.MeshBasicMaterial({ color: view.ink, depthTest: false });
     this.handles = new THREE.InstancedMesh(new THREE.OctahedronGeometry(1), handleMaterial, MAX_VERTICES);
     this.handles.count = 0;
     this.handles.renderOrder = 11;

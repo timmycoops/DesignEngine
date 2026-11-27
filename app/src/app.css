@@ -42,8 +42,44 @@
     --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-/* Dark only: panels sit beside a dark viewport. Slate greys, with the gold accent for what is
-   active or selected (the viewport draws the selected string in the same gold). */
+/* Light by default (Two sides plan, decision E): white panels on a faint grey, grey hairlines, the gold kept for
+   what is active or picked, deeper than in the dark look so it reads on white. The same meanings in both looks:
+   gold picked, orange warning, blue edited, red refused, green valid. The view's own colours are in
+   viewport/look.ts. */
+:root {
+    --background: oklch(0.99 0.002 250);
+    --foreground: oklch(0.25 0.015 250);
+    --card: oklch(1 0 0);
+    --card-foreground: oklch(0.25 0.015 250);
+    --popover: oklch(1 0 0);
+    --popover-foreground: oklch(0.25 0.015 250);
+    --primary: oklch(0.6 0.13 75);
+    --primary-foreground: oklch(1 0 0);
+    --secondary: oklch(0.955 0.005 250);
+    --secondary-foreground: oklch(0.25 0.015 250);
+    --muted: oklch(0.96 0.004 250);
+    --muted-foreground: oklch(0.47 0.014 250);
+    --accent: oklch(0.93 0.008 250);
+    --accent-foreground: oklch(0.2 0.015 250);
+    --destructive: oklch(0.55 0.19 25);
+    --border: oklch(0.9 0.006 250);
+    --input: oklch(0.86 0.008 250);
+    --ring: oklch(0.6 0.13 75 / 55%);
+    --selection: oklch(0.8 0.12 85 / 24%);
+    --ok: oklch(0.52 0.13 150);
+    --warning: oklch(0.6 0.16 50);
+    --edited: oklch(0.5 0.14 250);
+    --coal: oklch(0.25 0.005 250);
+    --waste: oklch(0.62 0.05 60);
+    /* The tab strips and the faintest words; the view's ground, behind the canvas while it starts. */
+    --strip: oklch(0.955 0.005 250);
+    --faint-foreground: oklch(0.6 0.01 250);
+    --view-background: #e8ecf1;
+    --radius: 0.5rem;
+}
+
+/* Dark, as a setting saved on this machine: panels beside a dark viewport. Slate greys, with the gold accent for
+   what is active or selected (the viewport draws the selected string in the same gold). */
 .dark {
     --background: oklch(0.2 0.015 250);
     --foreground: oklch(0.93 0.005 250);
@@ -71,6 +107,9 @@
     /* Ground in a strip log (Reserves case plan): coal near black, waste a dull brown. */
     --coal: oklch(0.14 0.005 250);
     --waste: oklch(0.42 0.04 60);
+    --strip: oklch(0.17 0.015 250);
+    --faint-foreground: oklch(0.55 0.012 250);
+    --view-background: #161e29;
     --radius: 0.5rem;
 }
 
@@ -107,29 +146,31 @@
 }
 
 /* dockview in the app's palette. */
-.dockview-theme-dark {
+.dockview-theme-dark,
+.dockview-theme-light {
   --dv-group-view-background-color: var(--background);
-  --dv-tabs-and-actions-container-background-color: oklch(0.17 0.015 250);
+  --dv-tabs-and-actions-container-background-color: var(--strip);
   --dv-activegroup-visiblepanel-tab-background-color: var(--background);
-  --dv-activegroup-hiddenpanel-tab-background-color: oklch(0.17 0.015 250);
+  --dv-activegroup-hiddenpanel-tab-background-color: var(--strip);
   --dv-inactivegroup-visiblepanel-tab-background-color: var(--background);
-  --dv-inactivegroup-hiddenpanel-tab-background-color: oklch(0.17 0.015 250);
+  --dv-inactivegroup-hiddenpanel-tab-background-color: var(--strip);
   --dv-tab-divider-color: transparent;
   --dv-activegroup-visiblepanel-tab-color: var(--foreground);
   --dv-activegroup-hiddenpanel-tab-color: var(--muted-foreground);
   --dv-inactivegroup-visiblepanel-tab-color: var(--muted-foreground);
-  --dv-inactivegroup-hiddenpanel-tab-color: oklch(0.55 0.012 250);
+  --dv-inactivegroup-hiddenpanel-tab-color: var(--faint-foreground);
   --dv-separator-border: var(--border);
   --dv-paneview-header-border-color: var(--border);
   --dv-active-sash-color: var(--primary);
-  --dv-drag-over-background-color: oklch(0.76 0.14 85 / 18%);
+  --dv-drag-over-background-color: var(--selection);
   --dv-tabs-and-actions-container-font-size: 12px;
   --dv-tabs-and-actions-container-height: 30px;
   font-family: var(--font-sans);
 }
 
 /* The active panel's tab carries the accent. */
-.dockview-theme-dark .dv-groupview.dv-active-group > .dv-tabs-and-actions-container .dv-tab.dv-active-tab {
+.dockview-theme-dark .dv-groupview.dv-active-group > .dv-tabs-and-actions-container .dv-tab.dv-active-tab,
+.dockview-theme-light .dv-groupview.dv-active-group > .dv-tabs-and-actions-container .dv-tab.dv-active-tab {
   box-shadow: inset 0 2px 0 var(--primary);
 }
 

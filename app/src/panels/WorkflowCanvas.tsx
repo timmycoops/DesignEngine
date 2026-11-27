@@ -8,6 +8,7 @@ import { useWorkspace } from '@/workspace/context';
 import { BASE, caseValue, changesOfCase, ruleWords, type SettingRow, settingsOfStep, stepsOfCase, withSetting } from './workflow';
 import { type GraphNode, rewire, workflowGraph } from './workflowGraph';
 import { LastBadge, plural, StepSettings, usePickedWorkflow } from './workflowParts';
+import { useLook } from '../workspace/useLook';
 import { CANVAS_TOOLS, type CanvasTool, dropWords, madeByStep, placeOfDrop, toolByKey } from './workflowTools';
 
 /**
@@ -139,6 +140,7 @@ function InputNode({ data }: NodeProps<Node<InputData>>) {
 const nodeTypes = { step: StepNode, pause: PauseNode, input: InputNode };
 
 export function WorkflowCanvas() {
+  const look = useLook();
   const { summary, setSelection, zoomTo, openPanel, openTool, setAddingTo } = useWorkspace();
   const [toolsOpen, setToolsOpen] = useState(true);
   const { workflows, chosen, workflow, revision, caseName, pick, pickCase, save } = usePickedWorkflow();
@@ -280,7 +282,7 @@ export function WorkflowCanvas() {
           nodes={nodes}
           edges={edges}
           nodeTypes={nodeTypes}
-          colorMode="dark"
+          colorMode={look}
           fitView
           minZoom={0.2}
           deleteKeyCode={null}

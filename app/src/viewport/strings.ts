@@ -32,7 +32,8 @@ import type { Layer, ProjectSummary, SnapHit, Vec3 } from '../bridge';
 import { type DesignLine, designLineMessage, lineToPick, type NearLine } from './designLines';
 import { typing } from './camera';
 import { viewControls } from './viewControls';
-import { colourOf, SELECTED } from './load';
+import { colourOf } from './load';
+import { view } from './look';
 import { PointMark } from './markers';
 import { cursorLabel, measureWords } from './measure';
 import type { Viewport } from './Viewport';
@@ -139,26 +140,16 @@ const HANDLE_PX = 10;
 /** Handles closer than this on screen to the last one drawn are skipped (they can still be grabbed). */
 const HANDLE_SPACING_PX = 12;
 const CLICK_SLOP_PX = 4;
-const PREVIEW = 0x66d9ff;
 /**
- * Where a section will cut, from its first point to the cursor: dashes in the theme's foreground over a line in the
- * scene's background, so it reads on the dark background and on every RL colour alike.
+ * Where a section will cut, from its first point to the cursor: dashes in the look's ink over a line in the view's
+ * ground (`view.sectionGuide`, `view.sectionGuideUnder`), so it reads in either look and on every RL colour alike.
+ * The guide's dashes and the gaps between them, on screen (px).
  */
-const SECTION_GUIDE = 0xe9ecef;
-const SECTION_GUIDE_UNDER = 0x161e29;
-/** The guide's dashes and the gaps between them, on screen (px). */
 const SECTION_DASH_PX = 10;
 const SECTION_GAP_PX = 6;
 const MAX_HANDLES = 8192;
+/** A snap marker's size; its colour (`view.snap`) says what the point will land on. */
 const SNAP_MARK_PX = 7;
-/** A snap marker's colour says what the point will land on. */
-const SNAP_COLOURS: Record<NonNullable<SnapHit['kind']>, number> = {
-  vertex: 0x7dfca0,
-  segment: 0x66d9ff,
-  intersection: 0xff7ad9,
-  surface: 0xffffff,
-  plane: 0xffb347,
-};
 
 export class StringLayer {
   mode: Mode = 'select';
@@ -243,35 +234,35 @@ export class StringLayer {
     private viewport: Viewport,
     private actions: StringActions,
   ) {
-    this.preview = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: PREVIEW, depthTest: false }));
+    this.preview = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: view.preview, depthTest: false }));
     this.preview.renderOrder = 12;
     this.preview.frustumCulled = false;
     this.preview.visible = false;
-    this.highlight = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: SELECTED, depthTest: false }));
+    this.highlight = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: view.selected, depthTest: false }));
     this.highlight.renderOrder = 11;
     this.highlight.frustumCulled = false;
     this.highlight.visible = false;
-    this.markedLines = new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: SELECTED, depthTest: false }));
+    this.markedLines = new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: view.selected, depthTest: false }));
     this.markedLines.renderOrder = 11;
     this.markedLines.frustumCulled = false;
     this.markedLines.visible = false;
-    this.handles = new THREE.InstancedMesh(new THREE.OctahedronGeometry(1), new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false }), MAX_HANDLES);
+    this.handles = new THREE.InstancedMesh(new THREE.OctahedronGeometry(1), new THREE.MeshBasicMaterial({ color: view.ink, depthTest: false }), MAX_HANDLES);
     this.handles.count = 0;
     this.handles.renderOrder = 13;
     this.handles.frustumCulled = false;
-    this.pickedHandles = new THREE.InstancedMesh(new THREE.OctahedronGeometry(1), new THREE.MeshBasicMaterial({ color: SELECTED, depthTest: false }), MAX_HANDLES);
+    this.pickedHandles = new THREE.InstancedMesh(new THREE.OctahedronGeometry(1), new THREE.MeshBasicMaterial({ color: view.selected, depthTest: false }), MAX_HANDLES);
     this.pickedHandles.count = 0;
     this.pickedHandles.renderOrder = 14;
     this.pickedHandles.frustumCulled = false;
-    this.groupPreview = new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: PREVIEW, depthTest: false }));
+    this.groupPreview = new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: view.preview, depthTest: false }));
     this.groupPreview.renderOrder = 12;
     this.groupPreview.frustumCulled = false;
     this.groupPreview.visible = false;
     const guide = new THREE.BufferGeometry();
     guide.setAttribute('position', new THREE.Float32BufferAttribute(6, 3));
     guide.setAttribute('lineDistance', new THREE.Float32BufferAttribute(2, 1));
-    this.sectionGuideUnder = new THREE.Line(guide, new THREE.LineBasicMaterial({ color: SECTION_GUIDE_UNDER, depthTest: false }));
-    this.sectionGuide = new THREE.Line(guide, new THREE.LineDashedMaterial({ color: SECTION_GUIDE, dashSize: 1, gapSize: 1, depthTest: false }));
+    this.sectionGuideUnder = new THREE.Line(guide, new THREE.LineBasicMaterial({ color: view.sectionGuideUnder, depthTest: false }));
+    this.sectionGuide = new THREE.Line(guide, new THREE.LineDashedMaterial({ color: view.sectionGuide, dashSize: 1, gapSize: 1, depthTest: false }));
     for (const [line, order] of [[this.sectionGuideUnder, 12], [this.sectionGuide, 12.5]] as const) {
       line.renderOrder = order;
       line.frustumCulled = false;
@@ -427,6 +418,24 @@ export class StringLayer {
   }
 
   /** Brings the drawn strings in line with the project summary. */
+  /** The look changed: recolour what this layer drew in the old one (the picks, handles, previews, guide, plain lines). */
+  applyLook(): void {
+    const tint = (o: { material: THREE.Material | THREE.Material[] }, colour: number) =>
+      ((o.material as THREE.LineBasicMaterial | THREE.MeshBasicMaterial).color.setHex(colour));
+    tint(this.preview, view.preview);
+    tint(this.groupPreview, view.preview);
+    tint(this.highlight, view.selected);
+    tint(this.markedLines, view.selected);
+    tint(this.pickedHandles, view.selected);
+    tint(this.handles, view.ink);
+    tint(this.sectionGuideUnder, view.sectionGuideUnder);
+    tint(this.sectionGuide, view.sectionGuide);
+    for (const [id, lines] of this.layerLines) {
+      const layer = this.layers.get(id);
+      tint(lines, layer ? colourOf(layer.colour) : view.ink);
+    }
+  }
+
   sync(summary: ProjectSummary): void {
     this.layers = new Map(summary.layers.map((l) => [l.id, l]));
     this.origin = summary.origin ?? [0, 0, 0];
@@ -464,7 +473,7 @@ export class StringLayer {
     for (const [id, lines] of this.layerLines) {
       const layer = this.layers.get(id);
       lines.visible = layer?.visible ?? true;
-      (lines.material as THREE.LineBasicMaterial).color.setHex(layer ? colourOf(layer.colour) : 0xffffff);
+      (lines.material as THREE.LineBasicMaterial).color.setHex(layer ? colourOf(layer.colour) : view.ink);
     }
     if (this.selected && !this.shown.has(this.selected)) this.showSelected(null);
     this.keepPicks();
@@ -853,7 +862,7 @@ export class StringLayer {
 
   private showSnap(hit: SnapHit | null, at: { x: number; y: number }): void {
     if (!hit?.kind) return this.clearSnapMark();
-    this.snapMark.show(new THREE.Vector3(...hit.local), SNAP_COLOURS[hit.kind]);
+    this.snapMark.show(new THREE.Vector3(...hit.local), view.snap[hit.kind]);
     const box = this.viewport.renderer.domElement.getBoundingClientRect();
     this.snapLabel.textContent = this.describeSnap(hit);
     this.snapLabel.style.transform = `translate(${at.x - box.left + 14}px, ${at.y - box.top + 14}px)`;

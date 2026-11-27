@@ -5,6 +5,47 @@ paths:
 
 # Interface
 
+## The two sides: the map of places (decision 0108)
+
+The app is two sides, Design and Tables, joined by the Objects table and a prepared input (the Build Plan's "Two
+sides plan"). This is where things live. Workstreams 2 to 4 of 0108 bring it in; until each lands, 0076's docks below
+stand for what it hasn't moved yet. A plan names where its feature goes on this map; a feature that needs a new place
+changes the map here first, in its own decision.
+
+- **The top row, on both sides:** the project menu (New, Open, Save as, Import, Export, Licence, View controls), the
+  Design or Tables switch, Undo and Redo, Find a command. On Tables, also the case and **Run**, the one place to run a
+  case.
+- **Design:** the ribbon of five groups (Strings, Walls, Surfaces, Solids, Geology), each tool in one group, with
+  Move, Rotate, Mirror and Delete at the end of every row. On the left, the layers, face designs, seam models and
+  workflows. In the middle, the view, its view bar, what tools work on at its foot, and documents opened over it (Face
+  design, a workflow). On the right, the one tool slot, chosen by the ribbon with no tool list of its own, and
+  Properties under it. Under the view, the Objects table and the Run log.
+- **Tables:** no ribbon. On the left, a list in the order the work flows: Inputs, Cases, Dataflows, Parameters,
+  Results, Schedule. In the middle, the item picked. On the right, the picked unit or row, and the 3D view only on
+  demand.
+- **One home each:**
+  - What a tool works on (Picked, Its layer, On show, a filter): the foot of the view.
+  - Running a case: Run in the top row.
+  - Editing a settings table: Parameters. Elsewhere it's shown and links there.
+  - A workflow: one document.
+  - Shaping design outputs for a dataflow: a prepared input, under Inputs.
+  - The Objects table: under the view on Design; read by Inputs on Tables.
+  - Design scenarios: layers and workflow cases on Design. A case on Tables names the input it reads.
+- **The look:** light by default, dark as a setting saved on the machine (View controls, Look). Panels take their
+  colours from the tokens in `app.css` (`:root` light, `.dark` dark); the view's colours are read from `view` in
+  `viewport/look.ts` when drawn, never from a constant. A part that draws differently in each look reads `useLook`.
+
+House rules:
+
+1. **Features add to places, not new places.** No new dock tab, band or inner tab strip without a change to the map.
+2. **One works-on.** Tools read it from the foot of the view; none draws its own.
+3. **Sketch the whole side, then plan.** A plan that changes a screen starts with a picture of the whole side with
+   the change in it.
+4. **Used before it's built on.** A screen gets no follow-up plan until Tim has used it by hand, on PIT B or the demo.
+5. **One UI plan open per side.**
+
+## Today's docks (0076, until 0108 moves them)
+
 Moved from CLAUDE.md. Decisions: 0026 (one layer tree), 0043 (colour by RL), 0076 (docks), 0080 (clicks, Esc,
 shortcuts), 0087 (layers only), 0089 (lists in the app's look), 0091 (in place or as new), 0092 (tools ask in turn).
 
@@ -57,7 +98,7 @@ turn (`useAsking` and `AskSteps`, `docs/decisions/0092-tools-ask-in-turn.md`): w
 runs and asks again; Esc steps back a prompt a press, and it asks only while its panel is in front. The button always
 runs with what the panel has. A click on a string at a prompt picks it too, so a tool takes what it works on as
 the prompt opens, and the project as it stands when the click lands. Clip, Trim, Extend, Split at a click, Where surfaces meet, every Cut solids mode, and Compare, Merge, Trim in plan and Triangulate do;
-a new tool that takes inputs asks the same way. Colours come from the theme's tokens, one meaning each: gold picked, orange `warning`, blue `edited`,
+a new tool that takes inputs asks the same way. Colours come from the theme's tokens, light and dark alike, one meaning each: gold picked, orange `warning`, blue `edited`,
 red refused, green valid. Don't hand-roll an input, select, badge or colour a kit part covers; add to the kit instead.
 
 

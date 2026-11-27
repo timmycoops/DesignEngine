@@ -9,6 +9,7 @@ import { valueColours } from './ramp';
 import { type Bands, bandsFor, colourByRl, colourByValue, NO_VALUE, type RlUniforms, setBands } from './rlColour';
 import { valueBands } from './bands';
 import { SolidFlags } from './solidFlags';
+import { view } from './look';
 import type { DecodedLevels } from './levels';
 
 interface GpuAdapterLike {
@@ -236,7 +237,7 @@ export class Viewport {
     this.orthographic.up.set(0, 1, 0);
     this.sectionCamera.up.set(0, 0, 1);
     this.orthographic3d.up.set(0, 0, 1);
-    this.scene.background = new THREE.Color(0x161e29);
+    this.scene.background = new THREE.Color(view.background);
     this.scene.add(new THREE.HemisphereLight(0xdfe8f2, 0x3a3a30, 1.4));
     const sun = new THREE.DirectionalLight(0xffffff, 1.8);
     sun.position.set(0.5, -0.8, 1.0);
@@ -475,7 +476,12 @@ export class Viewport {
    * The lines of a string layer or a road: hidden behind the solids and surfaces in front of them, a hair nearer than they
    * are so one lying on a solid or surface shows; or over everything, as `setStringsOver` says.
    */
-  stringLines(geometry: THREE.BufferGeometry, colour = 0xffffff): THREE.LineSegments {
+  /** The look changed: the ground in the new one (lines and picks are recoloured by whoever drew them). */
+  applyLook(): void {
+    this.scene.background = new THREE.Color(view.background);
+  }
+
+  stringLines(geometry: THREE.BufferGeometry, colour = view.ink): THREE.LineSegments {
     const material = new THREE.LineBasicNodeMaterial({ color: colour, depthTest: !this.stringsOverAll });
     material.positionNode = positionLocal.add(cameraPosition.sub(positionLocal).mul(STRING_NEARER));
     const lines = new THREE.LineSegments(geometry, material);

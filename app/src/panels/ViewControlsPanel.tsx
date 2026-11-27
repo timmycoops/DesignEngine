@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Choice, PanelHead } from '@/design-system/kit';
+import { type Look, setLook } from '../viewport/look';
+import { useLook } from '../workspace/useLook';
 import { Button } from '@/design-system/ui/button';
 import {
   DEFAULT_VIEW_CONTROLS,
@@ -16,6 +18,8 @@ import {
 
 const LAYOUTS: readonly MouseLayout[] = ['spry', 'ours'];
 const LAYOUT_WORDS: Record<MouseLayout, string> = { spry: "Spry's", ours: 'Ours' };
+const LOOKS: readonly Look[] = ['light', 'dark'];
+const LOOK_WORDS: Record<Look, string> = { light: 'Light', dark: 'Dark' };
 
 /** What each button does in a layout, as a row of the panel says it. */
 const LAYOUT_ROWS: Record<MouseLayout, [string, string][]> = {
@@ -38,6 +42,7 @@ const LAYOUT_ROWS: Record<MouseLayout, [string, string][]> = {
  * the new one. Saved on this machine, not in the project.
  */
 export function ViewControlsPanel() {
+  const look = useLook();
   const [controls, setControls] = useState(viewControls);
   const [listening, setListening] = useState<ViewKey | null>(null);
   const [refusal, setRefusal] = useState<string | null>(null);
@@ -78,10 +83,14 @@ export function ViewControlsPanel() {
   return (
     <div className="flex h-full flex-col text-xs">
       <PanelHead
-        line="How the mouse and keys move the view: Spry's layout or ours, and the view's keys"
-        more="Saved on this machine, not in the project. A key is changed by clicking it and pressing the new one; one that another key or a tool already uses is refused, saying which. Esc stops without changing it."
+        line="How the app looks, and how the mouse and keys move the view"
+        more="Saved on this machine, not in the project. Light or dark changes the panels and the view at once. A key is changed by clicking it and pressing the new one; one that another key or a tool already uses is refused, saying which. Esc stops without changing it."
       />
       <div className="flex flex-col gap-3 overflow-auto p-3">
+        <div className="flex items-center gap-2">
+          <span className="w-20 shrink-0 text-muted-foreground">Look</span>
+          <Choice value={look} options={LOOKS} labels={LOOK_WORDS} onChange={setLook} label="Light or dark" />
+        </div>
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center gap-2">
             <span className="w-20 shrink-0 text-muted-foreground">Mouse</span>
