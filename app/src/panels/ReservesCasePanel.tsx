@@ -1,6 +1,7 @@
-import { Braces, RotateCw, Save, Settings2, Undo2 } from 'lucide-react';
+import { Box, Braces, RotateCw, Save, Settings2, Undo2 } from 'lucide-react';
 import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { type CaseState, caseState, type CaseStepView, type ColumnSteps, type ColumnUnit, type DataflowState, objectDetails, type ParameterTable, reservesCaseStep, reservesColumn, reservesColumnTrace, reservesRerunParams } from '@/bridge';
+import { type CaseState, caseState, type CaseStepView, type ColumnSteps, type ColumnUnit, type DataflowState, objectDetails, type ParameterTable, reservesCaseStep, reservesColumn, reservesColumnTrace, reservesRerunParams, reservesSolids } from '@/bridge';
+import { openItem } from '@/workspace/tablesSide';
 import { PanelHead, StatusBadge } from '@/design-system/kit';
 import { Button } from '@/design-system/ui/button';
 import { cn } from 'cn';
@@ -13,7 +14,7 @@ import { CaseFigures, CaseForms, CasePills, useCases } from './CasesBar';
 import { cellSummaries, focusOf } from './notebook';
 import { type CellTrace, StepPane } from './StepPane';
 import { rangeWords } from './flowStages';
-import { CaseSwitcher, DataflowChain } from './CaseSwitcher';
+import { DataflowChain } from './CaseSwitcher';
 import { BlockMap, SettingsBySeam, StripLog, WholeCase } from './ReservesCaseParts';
 import { RowDataflowView } from './RowDataflowView';
 import { UnitsTable } from './UnitsTable';
@@ -21,9 +22,10 @@ import { type CaseFold, caseFold, mapMeasure, settingsGrid, shadeOf, stagesOf, s
 
 /**
  * The Reserves case tab (the Build Plan's "Reserves case plan", decisions 8, 9 and 11, workstream 4; laid out by the
- * "Case tab layout plan", workstream 1): a reserves table's case a step at a time. Across the top one header line: the
- * cases as pills and +, the case's dataflows as a chain with Run and Setup, and the open case's figures against Base with
- * whether any ground is made or lost. Under it the flow, which is the step list; then the step picked (its rule, what it
+ * "Case tab layout plan", workstream 1), now the Tables side's Cases item (decision 0108, workstream 4): a reserves table's
+ * case a step at a time. Across the top one header line: + for New, Copy and Add a dataflow, the case's dataflows as a
+ * chain with Setup, and the open case's figures against Base with whether any ground is made or lost; the case itself is
+ * picked in the list, and run from the top row. Under it the flow, which is the step list; then the step picked (its rule, what it
  * reads, settings tables lit gold, and writes, its settings by seam and ply to type in, the whole case at the step against
  * the last run), and the block map with the picked block's strip log before and after. An edit, here or in the Parameters
  * tab, runs the whole case again from the first step that reads it as it's typed; Save and run the case keeps it.
@@ -51,10 +53,10 @@ function editsOf(column: ColumnSteps | null, drafts: Record<string, Draft>) {
 
 const kindWords = { input: 'the blocks', built_in: 'Built-in', formula: 'Formula', allocation: 'Allocation' } as const;
 
-export function ReservesCasePanel() {
-  const { summary, selection, notebookOf, drafts, setDraft, runRecord, openTool } = useWorkspace();
+export function ReservesCasePanel({ caseTable = null }: { caseTable?: string | null }) {
+  const { summary, selection, notebookOf, drafts, setDraft, runRecord, openTool, setSelection, zoomTo } = useWorkspace();
   const tables = useMemo(() => (summary?.objects ?? []).filter((o) => o.kind === 'table' && !o.objects_own), [summary]);
-  const [pick, setPick] = useState<string | null>(null);
+  const [pick, setPick] = useState<string | null>(caseTable);
   const followed = notebookOf?.table ?? null;
   const last = selection[selection.length - 1] ?? null;
   useEffect(() => {
@@ -63,7 +65,15 @@ export function ReservesCasePanel() {
   useEffect(() => {
     if (followed) setPick(followed);
   }, [followed]);
+  // The case opened in the Tables side's list (decision 0108, workstream 4).
+  useEffect(() => {
+    if (caseTable) setPick(caseTable);
+  }, [caseTable]);
   const table = tables.find((t) => t.id === pick) ?? tables[tables.length - 1] ?? null;
+  // A case opened here another way (a table picked, Open in the case) is the one the list and the top row show.
+  useEffect(() => {
+    if (table && caseTable && table.id !== caseTable) openItem('case', table.id);
+  }, [table?.id]);
   // Anything the case reads may move it: its blocks, dataflow and tables, saved; the table run again.
   const changed = (summary?.objects ?? []).map((o) => `${o.id}:${o.revision}`).join(',');
 
@@ -80,7 +90,6 @@ export function ReservesCasePanel() {
   // The case's dataflows and which is open (decision 4, workstream 6): none picked, its reserves dataflow.
   const [state, setState] = useState<CaseState | null>(null);
   const [openFlow, setOpenFlow] = useState<string | null>(null);
-  const [running, setRunning] = useState(false);
   const [caseSaid, setCaseSaid] = useState<{ text: string; refused: boolean } | null>(null);
   // The case's Setup, its own view in place of the working area (Case setup and unit plan, decision 1), and the step unit
   // by unit.
@@ -115,36 +124,6 @@ export function ReservesCasePanel() {
   const openRow: DataflowState | null = state?.dataflows.find((d) => !d.reserves && d.dataflow === openFlow) ?? null;
   const reservesState = state?.dataflows.find((d) => d.reserves) ?? null;
   const openState = openRow ?? reservesState;
-
-  // Run one of the case's dataflows, those out of date in order (each judged after the one before it ran), or all.
-  const runCase = async (what: 'stale' | 'all' | DataflowState) => {
-    if (!table || !state) return;
-    setRunning(true);
-    setCaseSaid(null);
-    const ran: string[] = [];
-    const runOne = async (d: DataflowState) =>
-      d.reserves ? runRecord('reserves.run', await reservesRerunParams(table.id, [])) : runRecord('table.run_dataflow', { table: table.id, dataflow: d.dataflow });
-    try {
-      const order = typeof what === 'string' ? state.dataflows : [what];
-      for (const listed of order) {
-        let d = listed;
-        if (what === 'stale') {
-          const now = await caseState(table.id);
-          const it = now.dataflows.find((x) => x.dataflow === listed.dataflow);
-          if (!it || it.up_to_date) continue;
-          d = it;
-        }
-        const reply = await runOne(d);
-        if (reply.error) return setCaseSaid({ text: `${d.name}: ${reply.error}`, refused: true });
-        ran.push(d.name);
-      }
-      setCaseSaid({ text: ran.length ? `Ran ${ran.join(', then ')} on ${table.name}: each its own undo.` : 'Nothing was out of date.', refused: false });
-    } catch (e) {
-      setCaseSaid({ text: String(e), refused: true });
-    } finally {
-      setRunning(false);
-    }
-  };
 
   const edits = useMemo(() => editsOf(column, drafts), [column, drafts]);
   // The case at the step: at once for a new table, step or save; a third of a second after typing stops for an edit.
@@ -491,6 +470,15 @@ export function ReservesCasePanel() {
       )}
     </div>
   );
+  /** A block's solids picked and framed in the view: the Tables side's 3D, on demand (decision 0108). */
+  const showIn3d = async (path: string[]) => {
+    if (!table) return;
+    const ids = await reservesSolids(table.id, path);
+    if (ids.length === 0) return setCaseSaid({ text: `${path.join(' › ')} has no solids in the project to show`, refused: true });
+    setSelection(ids);
+    openTool('properties');
+    zoomTo(ids);
+  };
   // The block map and the picked block's strip log (decision 8).
   const blocksPane = view && (
     <div className={cn('space-y-2 p-2', fold === 'three' && 'min-h-0 overflow-auto')} data-slot="case-blocks">
@@ -511,7 +499,13 @@ export function ReservesCasePanel() {
       </div>
       {block && (
         <div className="space-y-1">
-          <div className="font-semibold">{block.join(' / ')}</div>
+          <div className="flex items-center gap-2">
+            <span className="font-semibold">{block.join(' / ')}</span>
+            {/* The view on demand (decision 0108, workstream 4): the block's solids picked and framed on Design. */}
+            <Button size="sm" variant="outline" className="ml-auto h-5 gap-1 px-1.5 text-[11px]" onClick={() => void showIn3d(block)} data-slot="case-show-3d" title={`${block.join(' › ')}: its solids picked and framed in the view, on Design`}>
+              <Box className="size-3" /> Show in 3D
+            </Button>
+          </div>
           {column && at !== null ? <StripLog before={at > 0 ? before : after} after={after} fields={column.fields} followed={focus} onFollow={(u) => setFocus(u.id)} /> : <div className="text-muted-foreground">Running the block…</div>}
         </div>
       )}
@@ -529,11 +523,11 @@ export function ReservesCasePanel() {
       <PanelHead line="A reserves table's case a step at a time: what each step reads and does to the whole case, its settings to change and see it run again." />
       {/* The header (Case tab layout plan, decisions 1 to 3): the cases, the case's dataflows, its figures, no ground made or lost. */}
       <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-2 py-1.5" data-slot="case-band">
-        <CasePills cases={cases} tables={tables} open={table.id} more={caseMore} onOpen={setPick} />
+        {/* The cases are the list's, Run the top row's (decision 0108, workstream 4): here New, Copy and Add a dataflow. */}
+        <CasePills cases={cases} tables={tables} open={table.id} more={caseMore} onOpen={setPick} pills={false} />
         <span className="h-4 w-px bg-border" />
         <DataflowChain state={state} open={openState?.dataflow ?? null} addOns={addOnNames} fallback={column?.dataflow ?? '…'} onOpen={(d) => (setSetupOpen(false), setOpenFlow(d.reserves ? null : d.dataflow))} />
         {openRow && <span className="text-muted-foreground">rows, on {rangeWords(openRow)}</span>}
-        <CaseSwitcher state={state} open={openState?.dataflow ?? null} running={running} onRun={(w) => void runCase(w)} />
         <Button size="sm" variant={setupOpen ? 'secondary' : 'outline'} className="h-6 gap-1 px-2" onClick={() => setSetupOpen((o) => !o)} data-slot="case-setup" title="What fills this case: its blocks, dataflows, settings tables in order and where each field comes from">
           <Settings2 className="size-3" /> Setup
         </Button>

@@ -140,6 +140,39 @@ The shell check's stale menu list (no "A table (CSV)…", "Dataflow" for the Res
 | `--select` | 40 of 40 |
 | `--case` | 51 of 53, as on main (the demo's own two) |
 
+## Built: workstream 4, the Tables side
+
+- **One panel fills the Tables side** (`TablesSidePanel`, `tables` in `PANELS`), in place of the Reserves case and
+  Parameters tabs. Down its left the list in the order the work flows (`listOf` in `workspace/tablesSide.ts`):
+  1 Inputs (the Objects table, then any other table, such as one imported from a CSV), 2 Cases (each reserves table,
+  Base marked), 3 Dataflows (and the scripts their formulas load, with + New script), 4 Parameters, 5 Results (each
+  case's reserves table) and 6 Schedule (its place kept, not built). The list folds to its six numbers, remembered on
+  the machine, for the room a case's three columns want on a 1,600 px window.
+- **The item picked fills the middle**, made from the views there were: the case a step at a time (flow, step, units
+  table, block map, Setup), the Parameters editor with no list of its own (its rename, copy and delete menu moved onto
+  the list's lit row), a table's grid for an input or a result, and the schedule's place. The case and the parameters
+  stay in the page once opened, so a step picked and an edit not yet saved are there on coming back.
+- **Case and Run on the top row** (`CaseRun` in the ribbon on Tables), the one place on the side to run: the case,
+  picked there or by opening a case or a result in the list; Run, its dataflows one at a time, what's out of date or
+  all, each its own undo; Up to date or Out of date with why in its tip. The case view has no Run and no case pills of
+  its own: its + keeps New case, Copy case and Add a dataflow. The block map's Run again (this block, its strip) stays
+  beside the map, as a part run.
+- **The 3D view on demand:** Show in 3D on the case's picked block picks its solids and frames them on Design.
+- **Each section is an item** (`dock: 'item'` in `PANELS`, `isItem`): Find a command lists Inputs, Cases, Dataflows,
+  Parameters, Results and Schedule, and `showPanel` opens one in the Tables panel; a layout saved with the old tabs has
+  them closed as it opens. What's open, and the case the top row runs, live in `tablesSide.ts`, so a Setup's Edit, a
+  setting's cell or Open in the case lights its row in the list. A CSV imported as a table opens under Inputs.
+- **The Tables panel under the view is Design's** (`restable`, no longer `both`): the Objects table, or any table
+  picked at its head.
+
+| Check | Result |
+|---|---|
+| `pnpm test` | 203 pass, 5 new (`tests/tablesSide.test.mjs`): the list down the chain from a project's objects and cases, an imported table as an input, what each kind opens as, the case the top row runs following a case or result opened, each section an item for Find a command |
+| `--shell`, release build from this branch, 16 Nov demo | 62 of 62: the Tables side's six sections, each opening its item in the middle, the panel filling the window, Case and Run on the top row and no row of tools; the Run log and the Objects table under the view on Design; every panel's first control within 40 px; pictures of each item |
+| `--case` | 52 of 54: the case picked in the list and lit there, one Run on the side, in the ribbon, with the case picked; the case's figures unchanged (roof loss 166,169 m³, ROM coal 9,234,489 t at final). The two left fail on main too, from the used demo (a "Check haulage" dataflow and a second "Reserves assumptions" already in it) |
+| `--workflow` | 38 of 38 |
+| `--select` | 40 of 40 |
+
 ## Known limits
 
 - **The section's labels and the overview** keep their dark plate with white words in both looks, so they read over
@@ -149,8 +182,14 @@ The shell check's stale menu list (no "A table (CSV)…", "Dataflow" for the Res
 - **What's picked is a deep amber on light** (`0xc28400`), the gold made darker so a 1 px line reads on the pale
   ground (2.7:1). It's still the picked colour; the panels' gold matches it.
 - **A section cut before the change** keeps its line colours until it's cut again.
-- **The Tables side has a row, not yet its list** (workstream 4), and Compare blocks stays on Geology with the Reserves
-  panel until results have their own place.
+- **Compare with Spry or Deswik stays on Geology** (Compare blocks, with Interrogate), not yet under Results: it runs
+  on the solids picked in the view and writes onto them, so it needs the works-on bar, which is on Design.
+- **The picked unit opens under its row** in the units table, as 0107 put it, not in a pane of its own on the right.
+  The right of the Tables side has no pane of its own: the case's block map is on its right.
+- **At 1,600 px the case keeps its three columns** only just; on a narrower window fold the list to its numbers for the
+  room.
+- **The `--dataflow` bench** still stops on main at "Waiting on object.set_attributes", as before this workstream; it
+  wasn't run.
 - **On a narrow window the Design rows fold sooner**: Move, Rotate, Mirror and Delete take room at each row's end.
 - **The app benches need `bench/out` to exist**: in a fresh worktree a bench ran to its end and then waited, never
   writing its results. Each bench run here used its own WebView2 folder (`WEBVIEW2_USER_DATA_FOLDER`), as one that

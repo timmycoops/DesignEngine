@@ -3,17 +3,18 @@
  * as a tab in the tool dock on the right, beside Properties, and a table as a tab in the results dock under the view.
  * Kept free of React, so the tool list and the tests can read it.
  */
-export type PanelId = 'layers' | 'properties' | 'strings' | 'from_surfaces' | 'surfaces' | 'move' | 'builder' | 'cut' | 'reserves' | 'workflow' | 'runlog' | 'restable' | 'case' | 'params' | 'face' | 'licence' | 'viewcontrols';
+export type PanelId = 'layers' | 'properties' | 'strings' | 'from_surfaces' | 'surfaces' | 'move' | 'builder' | 'cut' | 'reserves' | 'workflow' | 'runlog' | 'restable' | 'tables' | 'inputs' | 'case' | 'dataflows' | 'params' | 'results' | 'schedule' | 'face' | 'licence' | 'viewcontrols';
 
 /**
  * Where a panel opens (decisions 0076, 0108): the tree on the left; the one tool slot on the right, a tool at a time;
- * the inspector (Properties) under it; the tables under the view; or a document over the view, as a tab beside it.
+ * the inspector (Properties) under it; the tables under the view; or a document over the view, as a tab beside it. An
+ * `item` is no dock of its own: it's an item of the Tables side's list, shown in the Tables panel's middle.
  */
-export type Dock = 'left' | 'tools' | 'inspector' | 'results' | 'document';
+export type Dock = 'left' | 'tools' | 'inspector' | 'results' | 'document' | 'item';
 
 /**
- * The side of the app a panel is on (decision 0108): Design for the view's work, Tables for the table work, `both` for
- * one that moves to whichever side asks for it (the Tables panel: the Objects table on Design, reserves tables on Tables).
+ * The side of the app a panel is on (decision 0108): Design for the view's work, Tables for the table work. `both` is
+ * kept for a panel that moves to whichever side asks for it; none does since the Tables side has its own list.
  */
 export type PanelSide = 'design' | 'tables' | 'both';
 
@@ -39,15 +40,25 @@ export const PANELS: readonly { id: PanelId; title: string; dock: Dock; size: nu
   { id: 'licence', title: 'Licence', dock: 'tools', size: TOOL_DOCK_WIDTH },
   { id: 'viewcontrols', title: 'View controls', dock: 'tools', size: TOOL_DOCK_WIDTH },
   { id: 'runlog', title: 'Run log', dock: 'results', size: 200 },
-  // Every table, the objects and each reserves table (Tables and scripts plan, decision 1). Kept the Reserves table's id,
-  // so a saved layout finds it.
-  { id: 'restable', title: 'Tables', dock: 'results', size: 400, side: 'both' },
+  // The Objects table under the view, and any other table picked at its head (Tables and scripts plan, decision 1). Kept
+  // the Reserves table's id, so a saved layout finds it.
+  { id: 'restable', title: 'Tables', dock: 'results', size: 400 },
+  // The Tables side (decision 0108, workstream 4): one panel filling the window, its list down the left, the item picked
+  // in the middle, and its items, each one tool for Find a command.
+  { id: 'tables', title: 'Tables side', dock: 'results', size: 520, side: 'tables' },
+  { id: 'inputs', title: 'Inputs', dock: 'item', size: 0, side: 'tables' },
   // A reserves table's case a step at a time (Reserves case plan, decision 8).
-  { id: 'case', title: 'Reserves case', dock: 'results', size: 520, side: 'tables' },
-  { id: 'params', title: 'Parameters', dock: 'results', size: 400, side: 'tables' },
+  { id: 'case', title: 'Cases', dock: 'item', size: 0, side: 'tables' },
+  { id: 'dataflows', title: 'Dataflows', dock: 'item', size: 0, side: 'tables' },
+  { id: 'params', title: 'Parameters', dock: 'item', size: 0, side: 'tables' },
+  { id: 'results', title: 'Results', dock: 'item', size: 0, side: 'tables' },
+  { id: 'schedule', title: 'Schedule', dock: 'item', size: 0, side: 'tables' },
   // A design editor, not a result: a document over the view (decision 0108).
   { id: 'face', title: 'Face design', dock: 'document', size: 0 },
 ];
 
 /** The side a panel is on: Design unless the list says otherwise. */
 export const panelSide = (id: string): PanelSide => PANELS.find((p) => p.id === id)?.side ?? 'design';
+
+/** An item of the Tables side's list rather than a panel of its own: it opens in the Tables panel. */
+export const isItem = (id: string): boolean => PANELS.find((p) => p.id === id)?.dock === 'item';

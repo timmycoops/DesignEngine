@@ -78,11 +78,11 @@ function figuresTip(c: CaseHeadline | undefined, base: CaseHeadline | null): str
  * The cases as pills (decision 1), Base marked, the open one lit, a click opening one; then + (decision 2). `more` is the
  * open case's own tip: its blocks, seam model and steps.
  */
-export function CasePills({ cases, tables, open, more, onOpen }: { cases: Cases; tables: { id: string; name: string }[]; open: string | null; more: string; onOpen: (table: string) => void }) {
+export function CasePills({ cases, tables, open, more, onOpen, pills = true }: { cases: Cases; tables: { id: string; name: string }[]; open: string | null; more: string; onOpen: (table: string) => void; pills?: boolean }) {
   const { heads, base, form, setForm, busy } = cases;
   const byId = new Map(heads.map((h) => [h.table, h]));
-  // The reserves tables in the order they were made, with any table opened here that isn't one.
-  const shown = tables.filter((t) => byId.has(t.id) || t.id === open);
+  // The reserves tables in the order they were made, with any table opened here that isn't one; none where a list has them.
+  const shown = pills ? tables.filter((t) => byId.has(t.id) || t.id === open) : [];
   return (
     <span className="flex flex-wrap items-center gap-1" data-slot="case-pills">
       {shown.map((t) => {

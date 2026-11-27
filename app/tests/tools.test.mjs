@@ -92,7 +92,8 @@ test('every row holds tools that exist, named in words, and each tool is on one 
   assert.deepEqual(names(ROWS.surfaces), ['Compare', 'Merge', 'Trim plan', 'Triangulate', 'Surface between']);
   assert.deepEqual(names(ROWS.solids), ['Between surfaces', 'Strips by faces', 'By surface or RL', 'By seams', 'By benches', 'By blocks', 'Objects table', 'Repair']);
   assert.deepEqual(names(ROWS.geology), ['Import seam grids', 'Suggest definition', 'Build seam model', 'Relink geology', 'Interrogate', 'Compare blocks']);
-  assert.deepEqual(names(ROWS.tables), ['Reserves case', 'Tables', 'Parameters']);
+  // The Tables side's list down the chain (decision 0108, workstream 4), then the side's own panel.
+  assert.deepEqual(names(ROWS.tables), ['Inputs', 'Cases', 'Dataflows', 'Parameters', 'Results', 'Schedule', 'Tables side']);
   assert.deepEqual(names(EDIT_ROW), ['Move', 'Rotate', 'Mirror', 'Delete']);
   // The project menu: the project's files, Open, Import and Export as menus within it, and the machine's settings.
   assert.deepEqual(names(PROJECT_MENU), ['New', 'Save as', 'Licence', 'View controls']);
@@ -106,8 +107,9 @@ test("a group's tools are on its row, but for the few reached another way", () =
     for (const tool of stageTools(id)) if (!onRow.has(tool.key)) elsewhere.push(tool.key);
   }
   // Build a step is what Builder opens on, listed for the canvas; Cut solids, Strings, Strings from surfaces, Surfaces and
-  // Reserves as they stand are in the Panels menu, their choices on the rows.
-  assert.deepEqual(elsewhere.sort(), ['builder:step', 'cut', 'from_surfaces', 'reserves', 'strings', 'surfaces']);
+  // Reserves as they stand are in the Panels menu, their choices on the rows; so is the Tables panel under the view, its
+  // Objects table on the Solids row.
+  assert.deepEqual(elsewhere.sort(), ['builder:step', 'cut', 'from_surfaces', 'reserves', 'restable', 'strings', 'surfaces']);
   // A row shows a tool of another group only through its menus: the Solids row's own imports and exports are the
   // project menu's too.
   const visiting = [...STAGES.map((s) => s.id), 'tables'].flatMap((id) => rowTools(id).filter((t) => t.stage !== id && t.stage !== 'always').map((t) => `${id}: ${t.key}`));
@@ -122,7 +124,7 @@ test('every tool on the old one row is one click from its group or side, and eve
   assert.ok(opens('walls', 'face') && opens('walls', 'builder'));
   assert.ok(opens('solids', 'cut') && opens('solids', 'restable'));
   assert.ok(opens('geology', 'reserves'));
-  assert.ok(opens('tables', 'case') && opens('tables', 'restable') && opens('tables', 'params'));
+  assert.ok(['inputs', 'case', 'dataflows', 'params', 'results', 'schedule'].every((item) => opens('tables', item)));
   assert.deepEqual(ALWAYS_ROW, ['workflow']);
   const project = new Set(itemTools(PROJECT_MENU).map((t) => t.key));
   for (const tool of [...menuTools('open'), ...menuTools('import'), ...menuTools('export')]) assert.ok(project.has(tool.key), tool.key);
@@ -143,9 +145,9 @@ test('a tool is on a side: the Tables side its own, Design the groups, the proje
     if (p.side === 'tables') assert.equal(side, 'tables', `${p.id} is a Tables panel, its tool on Tables`);
     if (!p.side && side) assert.equal(side, 'design', `${p.id} is a Design panel, its tool on Design`);
   }
-  assert.deepEqual(PANELS.filter((p) => p.side).map((p) => `${p.id} ${p.side}`), ['restable both', 'case tables', 'params tables']);
+  assert.deepEqual(PANELS.filter((p) => p.side).map((p) => `${p.id} ${p.side}`), ['tables tables', 'inputs tables', 'case tables', 'dataflows tables', 'params tables', 'results tables', 'schedule tables']);
   assert.equal(panelSide('case'), 'tables');
-  assert.equal(panelSide('restable'), 'both');
+  assert.equal(panelSide('restable'), 'design', 'the Objects table under the view; the Tables side has its own');
   assert.equal(panelSide('builder'), 'design');
 });
 

@@ -8,8 +8,8 @@ paths:
 ## The two sides: the map of places (decision 0108)
 
 The app is two sides, Design and Tables, joined by the Objects table and a prepared input (the Build Plan's "Two
-sides plan"). This is where things live. Workstreams 2 to 4 of 0108 bring it in; until each lands, 0076's docks below
-stand for what it hasn't moved yet. A plan names where its feature goes on this map; a feature that needs a new place
+sides plan"). This is where things live. Workstreams 2 to 4 of 0108 brought it in; 0076's docks below hold for
+Design. A plan names where its feature goes on this map; a feature that needs a new place
 changes the map here first, in its own decision.
 
 - **The top row, on both sides:** the project menu (New, Open, Save as, Import, Export, Licence, View controls), the
@@ -20,14 +20,19 @@ changes the map here first, in its own decision.
   workflows. In the middle, the view, its view bar, what tools work on at its foot, and documents opened over it (Face
   design, a workflow). On the right, the one tool slot, chosen by the ribbon with no tool list of its own, and
   Properties under it. Under the view, the Objects table and the Run log.
-- **Tables:** no ribbon. On the left, a list in the order the work flows: Inputs, Cases, Dataflows, Parameters,
-  Results, Schedule. In the middle, the item picked. On the right, the picked unit or row, and the 3D view only on
-  demand.
+- **Tables:** no row of tools; one panel filling the window (`TablesSidePanel`, `tables` in `PANELS`). Down its left
+  the list (`listOf` in `workspace/tablesSide.ts`), in the order the work flows: 1 Inputs (the Objects table, then any
+  other table, such as one imported), 2 Cases, 3 Dataflows (and the scripts they load), 4 Parameters, 5 Results (each
+  case's reserves table), 6 Schedule (its place, not built); it folds to its six numbers for room. In the middle, the
+  item picked: the case a step at a time, the Parameters editor with no list of its own, a table's grid. Each section
+  is an item in `PANELS` (`dock: 'item'`), so Find a command and `showPanel` open it there; what's open and the case
+  the top row runs live in `tablesSide.ts`. The 3D view only on demand: Show in 3D on the case's picked block. The
+  picked unit opens under its row in the units table (0107).
 - **One home each:**
   - What a tool works on (Picked, Its layer, On show): the foot of the view (`WorksOnBar`, `panels/worksOn.ts`); Cut
     solids and Interrogate read it, and say what it takes where their own choice was. A new tool that takes solids
     reads it too.
-  - Running a case: Run in the top row.
+  - Running a case: Run in the top row (`CaseRun`), on the case picked there or opened in the list.
   - Editing a settings table: Parameters. Elsewhere it's shown and links there.
   - A workflow: one document.
   - Shaping design outputs for a dataflow: a prepared input, under Inputs.
@@ -57,14 +62,14 @@ drawn (face designs, workflows, parameter tables, dataflows, reserves tables) fo
 Delete there, an object hidden or shown from the view's right-click in Select, and found by name in the Objects table
 (`docs/decisions/0087-layers-only.md`); on the right one tool slot, a tool at a time, over Properties (`dock: 'inspector'`;
 a tool asked for closes the one before it, and its tab is named for the tool, decision 0108),
-one results dock under the view where every table opens as a tab (Run log, Tables, Reserves case, Parameters;
+one results dock under the view (the Run log, and Tables: the Objects table, or any table picked at its head;
 Face design and the workflow, its canvas beside its steps, open over the view as documents, `dock: 'document'`; the Dataflow and Setup tabs are gone into the Reserves case tab, 0105 workstream 7, and a
-saved layout's copy closes as it opens, `RETIRED`). The Reserves case tab (0105) edits settings through the same unsaved edits
+saved layout's copy closes as it opens, `RETIRED`; so do the Reserves case and Parameters tabs, items of the Tables side's list since 0108). The case view (0105), Cases on the Tables side, edits settings through the same unsaved edits
 (`drafts`) as the Parameters tab, which lays another tab's edits on its grid (`withTable`); a tab that edits a parameter
-table goes through `setDraft`, never a store of its own. Its layout is 0106's: one header line (the cases as pills with +,
-the case's dataflows as a chain with Run and Setup, the open case's figures and the balance), the flow across the width
+table goes through `setDraft`, never a store of its own. Its layout is 0106's: one header line (+ for New case, Copy case and Add a dataflow,
+the case's dataflows as a chain with Setup; the cases are the list's and Run the top row's, 0108, the open case's figures and the balance), the flow across the width
 as the step list, then the step, the units table and the block map side by side to the foot of the dock (folding under
-each other under 1,400 and 1,000 px, by the tab's own width); each part said once, help in tips, not lines. Its Run lists the case's dataflows (`case_state`) and runs them by
+each other under 1,400 and 1,000 px, by the tab's own width); each part said once, help in tips, not lines. Run (the top row's `CaseRun`) lists the case's dataflows (`case_state`) and runs them by
 `reserves.run` and `table.run_dataflow`, as Python's `run_case` does, each its own undo; a row dataflow opens in the same tab from the chain. Its cases (`CasesBar`) make New case, Copy case and Add a dataflow
 from existing commands, each its own undo, and its Setup (`CaseSetup`) is the old Setup tab fixed to the case open, its own view in place of the working area with Done (0107): it has no Run, a change putting the case out of date for Run to run. Tables holds every table, picked from its Table list: Objects, then each reserves table, one grid
 for both (`docs/decisions/0099-tables-and-scripts.md`). A new panel names its dock in `PANELS` (`app/src/workspace/Workspace.tsx`) and opens

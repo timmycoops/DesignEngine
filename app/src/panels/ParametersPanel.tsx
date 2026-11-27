@@ -6,6 +6,7 @@ import { ProjectScriptEditor } from './ProjectScriptEditor';
 import { Button } from '@/design-system/ui/button';
 import { cn } from 'cn';
 import { useWorkspace } from '@/workspace/context';
+import { openItem, sectionOf } from '@/workspace/tablesSide';
 import {
   ADD_UP_LABELS,
   ADD_UPS,
@@ -59,10 +60,14 @@ const isEditable = (o: ObjectSummary) => o.kind === 'parameter_table' || o.kind 
 /** A new script being written, before it's saved (decision 0099). */
 const NEW_SCRIPT = 'new-script';
 
-export function Parameters() {
+export function Parameters({ shown = null, list = true }: { shown?: string | null; list?: boolean } = {}) {
   const { summary, selection, toolAsk } = useWorkspace();
   const objects = useMemo(() => (summary?.objects ?? []).filter(isEditable), [summary]);
-  const [id, setId] = useState<string | null>(null);
+  const [id, setId] = useState<string | null>(shown);
+  // The table, dataflow or script opened in the Tables side's list, which then stands for this list (decision 0108).
+  useEffect(() => {
+    if (shown) setId(shown);
+  }, [shown]);
   const last = selection[selection.length - 1] ?? null;
   // A table or dataflow picked anywhere is the one shown.
   useEffect(() => {
@@ -88,6 +93,12 @@ export function Parameters() {
     }
   }, [toolAsk]);
   const object = id === NEW_SCRIPT ? null : (objects.find((o) => o.id === id) ?? objects.find((o) => o.kind === 'parameter_table') ?? objects[0] ?? null);
+  // One opened here another way (a Setup's Edit, a setting's cell) is the one the Tables side's list shows lit.
+  useEffect(() => {
+    const asked = objects.find((o) => o.id === id);
+    const section = asked && sectionOf(asked.kind, false);
+    if (!list && shown && asked && section && asked.id !== shown) openItem(section, asked.id);
+  }, [id]);
 
   if (!object && id !== NEW_SCRIPT) {
     return (
@@ -114,12 +125,12 @@ export function Parameters() {
       >
         {o.name}
       </button>
-      {o.id === object?.id && <ObjectMenu object={o} what={o.kind === 'dataflow' ? 'dataflow' : o.kind === 'script' ? 'script' : 'parameter table'} onDeleted={() => setId(null)} />}
+      {list && o.id === object?.id && <ObjectMenu object={o} what={o.kind === 'dataflow' ? 'dataflow' : o.kind === 'script' ? 'script' : 'parameter table'} onDeleted={() => setId(null)} />}
     </div>
   );
   return (
     <div className="flex h-full min-h-0 text-xs" data-tool-panel="parameters">
-      <div className="w-52 shrink-0 overflow-auto border-r border-border py-1">
+      <div className={cn('w-52 shrink-0 overflow-auto border-r border-border py-1', !list && 'hidden')}>
         <div className="px-2 py-0.5 font-semibold text-muted-foreground">Parameter tables</div>
         {tables.length ? tables.map(item) : <div className="px-3 text-muted-foreground">none</div>}
         <div className="mt-2 px-2 py-0.5 font-semibold text-muted-foreground">Dataflows</div>

@@ -143,6 +143,7 @@ export async function checkShell(
       await settle();
     };
     const sideNow = () => document.querySelector<HTMLElement>('[data-slot="side-switch"] [aria-checked="true"]')?.dataset.side ?? '';
+    const shownEl = (e: Element | null) => !!e && e.getClientRects().length > 0;
     const openMenu = async (button: HTMLElement | null | undefined) => {
       button?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerType: 'mouse', ctrlKey: false }));
       await settle();
@@ -170,14 +171,23 @@ export async function checkShell(
       Face: ['walls', 'face'],
       Reserves: ['geology', 'reserves:interrogate'],
       Blocks: ['solids', 'restable:objects'],
-      'Reserves table': ['tables', 'restable'],
+      'Reserves table': ['tables', 'results'],
       Parameters: ['tables', 'params'],
       Workflow: ['', 'workflow'],
     };
+    /** An item of the Tables side's list (decision 0108, workstream 4): its section's first row. */
+    const clickItem = async (section: string) => {
+      // Its first row, or its heading where it has none yet (an empty project).
+      (document.querySelector<HTMLElement>(`[data-slot="tables-item"][data-section="${section}"]`) ?? document.querySelector<HTMLElement>(`[data-slot="tables-section-head"][data-section="${section}"]`))?.click();
+      await settle();
+    };
     const tool = async (name: string) => {
       const [stage, key] = AT[name];
-      if (stage === 'tables') await goSide('tables');
-      else if (stage) await goStage(stage);
+      if (stage === 'tables') {
+        await goSide('tables');
+        return clickItem(key);
+      }
+      if (stage) await goStage(stage);
       else await goSide('design');
       await clickTool(key);
     };
@@ -219,9 +229,9 @@ export async function checkShell(
     await tool('Parameters');
     await tool('Face');
     const tables = size();
-    const tablesSide = tabs('params');
-    const tablesHidden = !(api.getPanel('params')?.group.api.isVisible ?? true);
-    expect("Face design and the workflow are documents over the view; the Run log under it; the Tables side's in a group of their own, hidden on Design", tabs('runlog').join() === 'runlog' && ['face', 'workflow'].every((id) => tabs('viewport').includes(id as PanelId)) && front('viewport') === 'face' && tablesSide.includes('restable') && tablesSide.includes('params') && !tablesSide.includes('runlog') && tablesHidden && sideNow() === 'design' && tables.width === open.width, {
+    const tablesSide = tabs('tables');
+    const tablesHidden = !(api.getPanel('tables')?.group.api.isVisible ?? true);
+    expect("Face design and the workflow are documents over the view; the Run log and the Objects table under it; the Tables side's in a group of their own, hidden on Design", tabs('runlog').join() === 'runlog,restable' && ['face', 'workflow'].every((id) => tabs('viewport').includes(id as PanelId)) && front('viewport') === 'face' && tablesSide.join() === 'tables' && tablesHidden && sideNow() === 'design' && tables.width === open.width, {
       over_the_view: tabs('viewport'),
       design: tabs('runlog'),
       tables_side: tablesSide,
@@ -230,6 +240,28 @@ export async function checkShell(
       view: tables,
     });
     expect('the results dock grows to the height a table asks for, and no further', blocksHeight === 400 && (api.getPanel('runlog')?.group.api.height ?? 0) === 400, { with_tables: blocksHeight, with_them_all: api.getPanel('runlog')?.group.api.height });
+
+    // The Tables side (decision 0108, workstream 4): one panel filling the window, its list down the chain, an item at a
+    // time in the middle, Case and Run on the top row and no row of tools under it.
+    await goSide('tables');
+    const sectionsListed = [...document.querySelectorAll<HTMLElement>('[data-slot="tables-list"]:not(.hidden) [data-slot="tables-section"]')].map((e) => e.dataset.section);
+    const itemsOpened: Record<string, string> = {};
+    for (const section of ['inputs', 'case', 'dataflows', 'params', 'results', 'schedule']) {
+      await clickItem(section);
+      const panel = document.querySelector<HTMLElement>('[data-tool-panel="tables-side"]');
+      const view = panel?.querySelector<HTMLElement>('[data-slot="tables-item-view"]');
+      const inView = [...(view?.children ?? [])].filter((e) => shownEl(e)).map((e) => e.querySelector<HTMLElement>('[data-tool-panel]')?.dataset.toolPanel ?? (e as HTMLElement).dataset.toolPanel ?? (e as HTMLElement).dataset.slot ?? '?');
+      itemsOpened[section] = `${panel?.dataset.section ?? ''}:${inView.join('+')}`;
+    }
+    const tablesWhole = api.getPanel('tables')?.group.api.isMaximized() ?? false;
+    const runOnTop = !!document.querySelector('[data-slot="ribbon"] [data-slot="case-run"]');
+    const toolRowAway = !shownEl(document.querySelector('[data-slot="tool-row"]'));
+    expect(
+      "the Tables side: its list down the chain, each item opening in the middle, Case and Run on the top row, no row of tools",
+      sectionsListed.join() === 'inputs,case,dataflows,params,results,schedule' && tablesWhole && runOnTop && toolRowAway && Object.entries(itemsOpened).every(([s, o]) => o.startsWith(`${s}:`) && !o.endsWith(':')),
+      { sections: sectionsListed, opened: itemsOpened, filling_the_window: tablesWhole, run_on_top: runOnTop, tool_row_away: toolRowAway },
+    );
+    await goSide('design');
 
     // A tool closed, its dock minimised, and the tool asked for from the toolbar.
     const slotName = api.getPanel('reserves')?.title ?? '';
@@ -256,7 +288,7 @@ export async function checkShell(
     await key('`');
     const viewOnly = size();
     await key('`');
-    expect('` with a table filling the window gives the window to the view, and ` again brings everything back', viewOnly.width >= window.innerWidth - 8 && Math.abs(size().width - tables.width) <= 10 && tabs('runlog').join() === 'runlog', { view_only: viewOnly, back: size() });
+    expect('` with a table filling the window gives the window to the view, and ` again brings everything back', viewOnly.width >= window.innerWidth - 8 && Math.abs(size().width - tables.width) <= 10 && tabs('runlog').join() === 'runlog,restable', { view_only: viewOnly, back: size() });
 
     // A dock with nothing left in it goes, and the view takes its room; opened again, the view gives it back.
     const layers = width('layers');
@@ -384,7 +416,7 @@ export async function checkShell(
     const projectWas = ['A project (.zdp)…', 'An older project folder (.zdproj)…'];
     const importWas = ['Surfaces…', 'Vulcan grid…', 'Strings…', 'Solids', 'Deswik drawing (.dcf)…', 'Spry project (.spry)…', 'A table (CSV)…', 'Suggest a stack definition (CSV)…', 'Build and check from a definition…', 'Relink geology…'];
     const exportWas = ['Selected to DXF…', 'Selected strings to CSV…', 'Selected solids to a zip…', 'Everything visible to DXF…', 'Visible strings to CSV…', 'Visible solids to a zip…'];
-    const panelsWas = ['Layers', 'Properties', 'Strings', 'Strings from surfaces', 'Surfaces', 'Move and copy', 'Builder', 'Cut solids', 'Reserves', 'Workflow', 'Licence', 'View controls', 'Run log', 'Tables', 'Reserves case', 'Parameters', 'Face design', 'Hide every panel, or bring them back`', 'Reset layout'];
+    const panelsWas = ['Layers', 'Properties', 'Strings', 'Strings from surfaces', 'Surfaces', 'Move and copy', 'Builder', 'Cut solids', 'Reserves', 'Workflow', 'Licence', 'View controls', 'Run log', 'Tables', 'Tables side', 'Face design', 'Hide every panel, or bring them back`', 'Reset layout'];
     const reads = (menu: { words: string }[], was: string[]) => menu.map((m) => m.words).join('|') === was.join('|');
     expect('the Open, Import, Export and Panels menus read as they should, what needs a selection off without one', reads(projectMenu, projectWas) && reads(importMenu, importWas) && reads(exportMenu, exportWas) && reads(panelsMenu, panelsWas) && exportMenu.map((m) => m.off).join() === 'true,true,true,false,false,false', {
       project: projectMenu.map((m) => m.words),
@@ -996,7 +1028,7 @@ export async function checkShell(
     await key('Escape');
     resetLayout(api);
     await settle();
-    const everyPanel = ['strings', 'builder', 'cut', 'reserves', 'workflow', 'restable', 'params', 'face'] as const;
+    const everyPanel = ['strings', 'builder', 'cut', 'reserves', 'workflow', 'restable', 'tables', 'face'] as const;
     for (const id of everyPanel) showPanel(api, id);
     await settle();
     const toFront = async (id: PanelId) => {
@@ -1017,7 +1049,9 @@ export async function checkShell(
     const lineOf = (id: PanelId) => headOf(id)?.querySelector<HTMLElement>('span') ?? null;
     /** How far under its tabs a panel's first control is, or its first line of words where it has no control (px). */
     const firstAt = (id: PanelId) => {
-      const top = stripOf(id)?.getBoundingClientRect().bottom ?? 0;
+      // Under its tabs, or the top of its group where it shows none (the Tables side, as the view).
+      const strip = stripOf(id);
+      const top = strip && strip.getClientRects().length > 0 ? strip.getBoundingClientRect().bottom : (groupOf(id)?.getBoundingClientRect().top ?? 0);
       const control = inPanel(id, 'button, input, select').find((e) => !e.closest('[data-slot="panel-head"]'));
       const words = inPanel(id, 'p, div, span, th, td, h3').find((e) => !e.closest('[data-slot="panel-head"]') && e.children.length === 0 && (e.textContent?.trim() ?? '') !== '');
       // Whichever comes first: a panel whose head is followed by what it's on, then its settings, starts with words.
@@ -1109,8 +1143,11 @@ export async function checkShell(
       await picture('docks-walls', 'walls', [], ['builder', 'face']);
       await picture('workflow-document', 'walls', [], ['workflow']);
       await picture('docks-reserves', 'geology', ['cut'], ['reserves:interrogate']);
-      await picture('tables-case', 'tables', [], ['case']);
-      await picture('tables-parameters', 'tables', [], ['params']);
+      await picture('tables-case', 'tables', ['case']);
+      await picture('tables-inputs', 'tables', ['inputs']);
+      await picture('tables-parameters', 'tables', ['params']);
+      await picture('tables-results', 'tables', ['results']);
+      await picture('tables-schedule', 'tables', ['schedule']);
       await picture('ribbon-strings', 'strings', [], ['strings:offset']);
       await picture('ribbon-geology', 'geology', []);
       // Find a command, open on what "seam" finds.
