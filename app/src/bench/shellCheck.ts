@@ -138,7 +138,7 @@ export async function checkShell(
       await settle();
     };
     /** Design or Tables, by the switch on the ribbon (decision 0108). */
-    const goSide = async (side: 'design' | 'tables') => {
+    const goSide = async (side: 'design' | 'both' | 'tables') => {
       document.querySelector<HTMLButtonElement>(`[data-slot="side-switch"] [data-side="${side}"]`)?.click();
       await settle();
     };
@@ -262,6 +262,29 @@ export async function checkShell(
       { sections: sectionsListed, opened: itemsOpened, filling_the_window: tablesWhole, run_on_top: runOnTop, tool_row_away: toolRowAway },
     );
     await goSide('design');
+    // Both (decision 0109): the Tables side beside the view on its right, Design's tools and the case's Run on the ribbon.
+    const viewOnDesign = tables.width;
+    await goSide('both');
+    const bothView = api.getPanel('viewport')?.group.element.getBoundingClientRect();
+    const tablesGroupNow = api.getPanel('tables')?.group;
+    const tablesBox = tablesGroupNow?.element.getBoundingClientRect();
+    const bothSaid = {
+      side: sideNow(),
+      view: bothView ? Math.round(bothView.width) : 0,
+      tables: tablesBox ? { left: Math.round(tablesBox.left), width: Math.round(tablesBox.width) } : null,
+      view_right: bothView ? Math.round(bothView.right) : 0,
+      filling: tablesGroupNow?.api.isMaximized() ?? null,
+      tool_row: shownEl(document.querySelector('[data-slot="tool-row"]')),
+      run: !!document.querySelector('[data-slot="ribbon"] [data-slot="case-run"]'),
+      slot_right: Math.round(api.getPanel('properties')?.group.element.getBoundingClientRect().left ?? 0),
+    };
+    expect(
+      "Both: the Tables side beside the view on its right, the view still there, the tool slot after them, Design's tools and the case's Run on the ribbon",
+      bothSaid.side === 'both' && !!tablesBox && !!bothView && Math.abs(tablesBox.left - bothView.right) <= 2 && bothSaid.view > 300 && tablesBox.width > 300 && bothSaid.filling === false && bothSaid.tool_row && bothSaid.run && bothSaid.slot_right >= Math.round(tablesBox.right) - 2,
+      bothSaid,
+    );
+    await goSide('design');
+    expect('from Both back to Design, the view has its room again and the Tables side is away', Math.abs(size().width - viewOnDesign) <= 10 && !(api.getPanel('tables')?.group.api.isVisible ?? false), { view: size().width, was: viewOnDesign });
 
     // A tool closed, its dock minimised, and the tool asked for from the toolbar.
     const slotName = api.getPanel('reserves')?.title ?? '';

@@ -4,7 +4,7 @@ import { cn } from 'cn';
 import { Button } from '@/design-system/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from '@/design-system/ui/dropdown-menu';
 import { Separator } from '@/design-system/ui/separator';
-import { ALWAYS_ROW, EDIT_ROW, type Group, panelTool, PROJECT_MENU, type RowItem, type RowMenu, ROWS, rowName, type Side, STAGES, toolByKey } from '@/tools';
+import { ALWAYS_ROW, EDIT_ROW, type Group, panelTool, PROJECT_MENU, type RowItem, type RowMenu, ROWS, rowName, type Showing, STAGES, toolByKey } from '@/tools';
 import { PANELS } from './panels';
 import { CaseRun } from '@/panels/CaseRun';
 import { BarTool, RowMenuItems, RowToolItem, type ToolUse } from './ToolMenu';
@@ -195,10 +195,14 @@ function ProjectMenu({ use }: { use: ToolUse }) {
   );
 }
 
-/** Design or Tables (decision 0108): which side of the app is in front, each with its own layout. */
-function SideSwitch({ side, onSide }: { side: Side; onSide: (side: Side) => void }) {
-  const sides: { id: Side; title: string; tip: string }[] = [
+/**
+ * Design, Both or Tables (decisions 0108, 0109): which side of the app is in front, each with its own layout, or both at
+ * once, the Tables side beside the view.
+ */
+function SideSwitch({ side, onSide }: { side: Showing; onSide: (side: Showing) => void }) {
+  const sides: { id: Showing; title: string; tip: string }[] = [
     { id: 'design', title: 'Design', tip: 'Design: strings, walls, surfaces, solids and geology, in the view' },
+    { id: 'both', title: 'Both', tip: 'Both: the Tables side beside the view, a pick on one shown on the other' },
     { id: 'tables', title: 'Tables', tip: 'Tables: inputs, cases, dataflows, parameters and results, on to the schedule' },
   ];
   return (
@@ -243,14 +247,15 @@ export function Ribbon({
 }: {
   projectName: string;
   projectPath: string | null;
-  side: Side;
-  onSide: (side: Side) => void;
+  side: Showing;
+  onSide: (side: Showing) => void;
   stage: StageId;
   onStage: (stage: StageId) => void;
   onFind: () => void;
   use: ToolUse;
 }) {
-  const design = side === 'design';
+  // Both shows Design's tools and the Tables side's case and Run together (decision 0109).
+  const design = side !== 'tables';
   return (
     <header data-slot="ribbon" data-side={side} className="shrink-0 border-b bg-card">
       <div data-slot="tab-row" className="flex h-[31px] items-center gap-0.5 px-2">
@@ -263,7 +268,7 @@ export function Ribbon({
         ))}
         <SideSwitch side={side} onSide={onSide} />
         {/* The one place on the Tables side to run (decision 0108, workstream 4). */}
-        {!design && <CaseRun />}
+        {side !== 'design' && <CaseRun />}
         {design && (
           <div role="tablist" aria-label="Groups of design tools" className="ml-2 flex h-full items-stretch">
             {STAGES.map((s) => (

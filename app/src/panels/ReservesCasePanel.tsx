@@ -1,7 +1,7 @@
 import { Box, Braces, RotateCw, Save, Settings2, Undo2 } from 'lucide-react';
 import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { type CaseState, caseState, type CaseStepView, type ColumnSteps, type ColumnUnit, type DataflowState, objectDetails, type ParameterTable, reservesCaseStep, reservesColumn, reservesColumnTrace, reservesRerunParams, reservesSolids } from '@/bridge';
-import { openItem } from '@/workspace/tablesSide';
+import { openItem, showingNow } from '@/workspace/tablesSide';
 import { PanelHead, StatusBadge } from '@/design-system/kit';
 import { Button } from '@/design-system/ui/button';
 import { cn } from 'cn';
@@ -476,9 +476,19 @@ export function ReservesCasePanel({ caseTable = null }: { caseTable?: string | n
     const ids = await reservesSolids(table.id, path);
     if (ids.length === 0) return setCaseSaid({ text: `${path.join(' › ')} has no solids in the project to show`, refused: true });
     setSelection(ids);
-    openTool('properties');
+    // With both shown the view is beside the case: framed there, the Tables side kept (decision 0109).
+    if (showingNow() !== 'both') openTool('properties');
     zoomTo(ids);
   };
+  // With both shown, the block picked on the map is picked in the view beside it (decision 0109).
+  useEffect(() => {
+    if (!table || !block || showingNow() !== 'both') return;
+    let current = true;
+    void reservesSolids(table.id, block).then((ids) => current && ids.length > 0 && setSelection(ids));
+    return () => {
+      current = false;
+    };
+  }, [table?.id, block?.join('/')]);
   // The block map and the picked block's strip log (decision 8).
   const blocksPane = view && (
     <div className={cn('space-y-2 p-2', fold === 'three' && 'min-h-0 overflow-auto')} data-slot="case-blocks">

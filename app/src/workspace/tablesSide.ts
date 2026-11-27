@@ -106,6 +106,13 @@ export function onItem(f: () => void): () => void {
   return () => listeners.delete(f);
 }
 
+/** What the window shows, set by the workspace as it changes (decision 0109): the case's picks go to the view in Both. */
+let showing: 'design' | 'tables' | 'both' = 'design';
+export const showingNow = () => showing;
+export const setShowing = (now: 'design' | 'tables' | 'both') => {
+  showing = now;
+};
+
 /** For the tests: back to as it starts. */
 export function resetItems() {
   open = { section: 'case', id: null };
