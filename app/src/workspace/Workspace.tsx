@@ -25,13 +25,13 @@ import { RunLogPanel } from '@/panels/RunLogPanel';
 import { StringsPanel } from '@/panels/StringsPanel';
 import { ViewportPanel } from '@/panels/ViewportPanel';
 import { TablesPanel } from '@/panels/TablesPanel';
-import { Parameters } from '@/panels/ParametersPanel';
 import { WorkflowDocument } from '@/panels/WorkflowDocument';
 import { SurfacesPanel } from '@/panels/SurfacesPanel';
 import { LicencePanel } from '@/panels/LicencePanel';
 import { ViewControlsPanel } from '@/panels/ViewControlsPanel';
-import { ReservesCasePanel } from '@/panels/ReservesCasePanel';
-import { type Dock, type PanelId, PANELS, panelSide, TOOL_DOCK_WIDTH } from './panels';
+import { TablesSidePanel } from '@/panels/TablesSidePanel';
+import { type Dock, isItem, type PanelId, PANELS, panelSide, TOOL_DOCK_WIDTH } from './panels';
+import { openItem, type Section } from './tablesSide';
 import type { Side } from '@/tools';
 
 /** What each panel draws. A panel in the list with nothing to draw doesn't compile. */
@@ -55,8 +55,14 @@ const components: Record<PanelId | 'viewport' | (typeof RETIRED)[number], () => 
   notebook: () => null,
   setup: () => null,
   canvas: () => null,
-  case: ReservesCasePanel,
-  params: Parameters,
+  // The Tables side, one panel: its list's items are drawn in its middle, never as tabs of their own (decision 0108).
+  tables: TablesSidePanel,
+  inputs: () => null,
+  case: () => null,
+  dataflows: () => null,
+  params: () => null,
+  results: () => null,
+  schedule: () => null,
   licence: LicencePanel,
   viewcontrols: ViewControlsPanel,
 };
@@ -169,9 +175,9 @@ export function showSide(api: DockviewApi, side: Side) {
   if (side === 'tables') {
     let group = gatherTables(api, true);
     if (!group) {
-      const made = PANELS.find((p) => p.id === 'case')!;
+      const made = PANELS.find((p) => p.id === 'tables')!;
       api.addPanel({ id: made.id, component: made.id, title: made.title, position: { referencePanel: 'viewport', direction: 'below' } });
-      group = api.getPanel('case')!.group;
+      group = api.getPanel('tables')!.group;
     }
     holdDocks(api, designDocks);
     if (!group.api.isVisible) group.api.setVisible(true);
@@ -179,6 +185,9 @@ export function showSide(api: DockviewApi, side: Side) {
       if (api.hasMaximizedGroup()) api.exitMaximizedGroup();
       group.api.maximize();
     }
+    // The Tables panel alone fills the side with no tab over it, as the view has none (decision 0108, workstream 4).
+    const alone = group.panels.length === 1 && group.panels[0].id === 'tables';
+    if (group.header.hidden !== alone) group.header.hidden = alone;
   } else {
     if (api.hasMaximizedGroup()) api.exitMaximizedGroup();
     gatherTables(api, false)?.api.setVisible(false);
@@ -359,6 +368,9 @@ function restoreLayout(api: DockviewApi) {
     if (saved) {
       api.fromJSON(JSON.parse(saved));
       for (const id of RETIRED) api.getPanel(id)?.api.close();
+      // The Reserves case and Parameters tabs of a layout saved before the Tables side had its list (decision 0108,
+      // workstream 4): each is an item of the list now, shown in the Tables panel.
+      for (const p of [...api.panels]) if (isItem(p.id)) p.api.close();
       // A layout saved before a tab was renamed (the Notebook, now Dataflow) keeps its old title: today's names.
       for (const p of PANELS) {
         const shown = api.getPanel(p.id);
@@ -382,6 +394,11 @@ function restoreLayout(api: DockviewApi) {
  * in it is made again: the tools down the right of the window, the tables under the view.
  */
 export function showPanel(api: DockviewApi, id: PanelId) {
+  // An item of the Tables side's list opens in its panel (decision 0108, workstream 4).
+  if (isItem(id)) {
+    openItem(id as Section);
+    id = 'tables';
+  }
   const side = panelSide(id);
   if (side !== 'both' && side !== currentSide) {
     onSideAsked?.(side);
@@ -410,7 +427,7 @@ function showOnTables(api: DockviewApi, id: PanelId) {
  * not yet saved, which a tab put away would lose, as Run in notebook brings the Notebook to the front beside it
  * (decision 0081, point 7).
  */
-const KEEP_MOUNTED: readonly PanelId[] = ['params'];
+const KEEP_MOUNTED: readonly PanelId[] = ['tables'];
 
 function keepMounted(api: DockviewApi) {
   for (const id of KEEP_MOUNTED) {

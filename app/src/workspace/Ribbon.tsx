@@ -6,6 +6,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { Separator } from '@/design-system/ui/separator';
 import { ALWAYS_ROW, EDIT_ROW, type Group, panelTool, PROJECT_MENU, type RowItem, type RowMenu, ROWS, rowName, type Side, STAGES, toolByKey } from '@/tools';
 import { PANELS } from './panels';
+import { CaseRun } from '@/panels/CaseRun';
 import { BarTool, RowMenuItems, RowToolItem, type ToolUse } from './ToolMenu';
 import { IconNamed } from './toolIcons';
 import { toolShortcut } from '@/viewport/viewControls';
@@ -225,9 +226,10 @@ function SideSwitch({ side, onSide }: { side: Side; onSide: (side: Side) => void
 
 /**
  * The ribbon (decisions 0076, 0108). Along the top: the project menu, the project's name, Save, Undo and Redo, the
- * Design or Tables switch, on Design a tab for each group of tools, and Find a command. Under it on Design, the group's
- * row of tools named in words, with Move, Rotate, Mirror and Delete, Workflow and the Panels menu at its end; on Tables,
- * the Tables side's row until it has its list. Switching group changes the row only; switching side changes the layout.
+ * Design or Tables switch, on Design a tab for each group of tools and on Tables the case and its Run, and Find a command.
+ * Under it on Design, the group's row of tools named in words, with Move, Rotate, Mirror and Delete, Workflow and the
+ * Panels menu at its end; on Tables no row, as the side's list down its left is its row. Switching group changes the row
+ * only; switching side changes the layout.
  */
 export function Ribbon({
   projectName,
@@ -260,6 +262,8 @@ export function Ribbon({
           <BarTool key={key} tool={toolByKey(key)!} use={use} />
         ))}
         <SideSwitch side={side} onSide={onSide} />
+        {/* The one place on the Tables side to run (decision 0108, workstream 4). */}
+        {!design && <CaseRun />}
         {design && (
           <div role="tablist" aria-label="Groups of design tools" className="ml-2 flex h-full items-stretch">
             {STAGES.map((s) => (
@@ -292,8 +296,8 @@ export function Ribbon({
           <kbd className="shrink-0 rounded border px-1 text-[10px]">Ctrl K</kbd>
         </button>
       </div>
-      <div data-slot="tool-row" className="flex h-9 items-center gap-0.5 border-t bg-background px-2">
-        <ToolRow key={design ? stage : 'tables'} items={design ? ROWS[stage] : ROWS.tables} use={use} />
+      <div data-slot="tool-row" className={cn('flex h-9 items-center gap-0.5 border-t bg-background px-2', !design && 'hidden')}>
+        {design && <ToolRow key={stage} items={ROWS[stage]} use={use} />}
         <div className="ml-2 flex shrink-0 items-center gap-0.5">
           {design && (
             <div data-slot="edit-row" className="mr-1 flex items-center gap-0.5 border-l pl-2">
@@ -313,7 +317,7 @@ export function Ribbon({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              {PANELS.map((p) => (
+              {PANELS.filter((p) => p.dock !== 'item').map((p) => (
                 <DropdownMenuItem key={p.id} data-tool={p.id} onSelect={() => use.run(panelTool(p.id))}>
                   {panelTool(p.id).label}
                 </DropdownMenuItem>

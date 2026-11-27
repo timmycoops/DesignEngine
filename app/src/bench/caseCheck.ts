@@ -53,14 +53,22 @@ export async function checkCase(path: string, log: (line: string) => void, show:
   if (!base) return { ...results, failures };
 
   showPanel(api, 'case');
-  // The case picked by its pill on the header (Case tab layout plan, decision 1).
-  (await until(() => document.querySelector<HTMLElement>(`[data-tool-panel="case"] [data-slot="case-headline"][data-table="${base.id}"]`)))?.click();
+  // The case picked in the Tables side's list (decision 0108, workstream 4), where its pill on the header was.
+  (await until(() => document.querySelector<HTMLElement>(`[data-slot="tables-item"][data-section="case"][data-id="${base.id}"]`)))?.click();
   const started = performance.now();
   // The case shown is the Base table's, not the one the tab opened on first.
   const opened = await until(() => document.querySelector(`[data-tool-panel="case"][data-case="${base.id}"]`) && caseRow('Roof loss'));
   expect('the tab opens at rom_loss with the whole case', !!opened, { ms: Math.round(performance.now() - started), row: opened });
   const picked = document.querySelector('[data-tool-panel="case"] [data-slot="case-step"].bg-selection')?.getAttribute('data-step');
   expect('rom_loss is the step picked', picked === 'rom_loss', picked);
+  // The Tables side (decision 0108, workstream 4): the case lit in the list, one Run on the side, on the top row.
+  const runs = [...document.querySelectorAll<HTMLElement>('[data-slot="case-switch"]')];
+  const litItem = document.querySelector<HTMLElement>('[data-slot="tables-item"][aria-current="true"]');
+  expect(
+    'the case is lit in the list, and run from the one Run on the side, on the top row with the case picked',
+    litItem?.dataset.section === 'case' && litItem.dataset.id === base.id && runs.length === 1 && !!runs[0].closest('[data-slot="ribbon"]') && document.querySelector<HTMLSelectElement>('[data-slot="case-pick"]')?.value === base.id && !document.querySelector('[data-tool-panel="case"] [data-slot="case-headline"]'),
+    { lit: litItem?.dataset.name, runs: runs.length, in_ribbon: !!runs[0]?.closest('[data-slot="ribbon"]'), picked: document.querySelector<HTMLSelectElement>('[data-slot="case-pick"]')?.value },
+  );
   expect('the band says no ground is made or lost', (document.querySelector('[data-slot="case-band"]')?.textContent ?? '').includes('Balanced'));
   expect('roof loss at 0.1 m is 166,169 m³', (opened?.[1] ?? '').includes('166,169'), opened?.[1]);
   // The flow is the step list (Case tab layout plan, decision 5): its stages name their steps.
@@ -169,6 +177,9 @@ export async function checkCase(path: string, log: (line: string) => void, show:
         .map((e) => e.textContent ?? ''),
     };
   };
+  // The list folded to its numbers, for the room the three columns want at 1,600 px (decision 0108, workstream 4).
+  document.querySelector<HTMLElement>('[data-slot="tables-list"]:not(.hidden) [data-slot="tables-list-fold"]')?.click();
+  await wait(300);
   const wide = await layoutAt(null);
   expect(
     'wide, step | units table | block map side by side, filling the height',
@@ -194,6 +205,8 @@ export async function checkCase(path: string, log: (line: string) => void, show:
   );
   await picture?.('case-999');
   await layoutAt(null);
+  document.querySelector<HTMLElement>('[data-slot="tables-list"][data-folded="yes"] [data-slot="tables-list-fold"]')?.click();
+  await wait(300);
   // The picked unit at full width, for the picture (Case setup and unit plan, decisions 5 to 8): a loss piece.
   document.querySelector<HTMLElement>('[data-slot="units-row"][data-left="yes"]')?.click();
   if (await until(() => document.querySelector('[data-slot="picked-piece"]'), 5_000)) {
@@ -350,7 +363,7 @@ export async function checkCase(path: string, log: (line: string) => void, show:
   await picture?.('case-dataflows');
   document.querySelector<HTMLButtonElement>('[data-slot="case-run-stale"]')?.click();
   const ranSaid = await until(() => {
-    const t = document.querySelector('[data-slot="case-said"]')?.textContent ?? '';
+    const t = document.querySelector('[data-slot="case-run-said"]')?.textContent ?? '';
     return t.startsWith('Ran ') || t.startsWith('Nothing') ? t : null;
   }, 30_000);
   expect("Run what's out of date runs the row dataflow alone", !!ranSaid && ranSaid.startsWith('Ran Check haulage on'), ranSaid);
@@ -398,7 +411,8 @@ export async function checkCase(path: string, log: (line: string) => void, show:
   // New case; and no Dataflow or Setup tab left.
   const tabs = [...document.querySelectorAll<HTMLElement>('.dv-tab')].map((t) => t.textContent?.trim() ?? '');
   expect('the Dataflow and Setup tabs are gone', !tabs.includes('Dataflow') && !tabs.includes('Setup'), tabs);
-  const caseRows = () => [...document.querySelectorAll<HTMLElement>('[data-slot="case-headline"]')];
+  // The cases are rows of the Tables side's list (decision 0108, workstream 4), each carrying its four figures.
+  const caseRows = () => [...document.querySelectorAll<HTMLElement>('[data-slot="tables-item"][data-section="case"]')];
   const rowOf = (name: string) => caseRows().find((r) => r.dataset.case === name) ?? null;
   // The cases are pills on the header (decision 1), each carrying its four figures.
   const figure = (name: string, field: string) => Number(rowOf(name)?.getAttribute(`data-${field}`) ?? NaN);
@@ -487,14 +501,14 @@ export async function checkCase(path: string, log: (line: string) => void, show:
   const namesListed = namesOpen?.querySelectorAll('span').length ?? 0;
   expect('a settings table read for more than 12 settings folds to its count, the names on a click', !!fold && count > 12 && (fold.textContent ?? '').includes(`${count} settings`) && namesListed === count, { count, listed: namesListed });
   // One place to run the whole case: the reserves dataflow's Run in Run ▾ is every block again; the map keeps its parts.
-  document.querySelector<HTMLElement>('[data-tool-panel="case"] [data-slot="case-switch"]')?.click();
+  document.querySelector<HTMLElement>('[data-slot="case-run"] [data-slot="case-switch"]')?.click();
   const everyBlock = await until(() => {
     const row = [...document.querySelectorAll<HTMLElement>('[data-slot="case-dataflow-row"]')][0];
     return row?.querySelector('[data-slot="case-run-one"]')?.textContent?.includes('Every block again') ? row : null;
   }, 5_000);
   expect("Run's reserves dataflow runs every block again", !!everyBlock);
   await picture?.('case-setup-view');
-  document.querySelector<HTMLElement>('[data-tool-panel="case"] [data-slot="case-switch"]')?.click();
+  document.querySelector<HTMLElement>('[data-slot="case-run"] [data-slot="case-switch"]')?.click();
   // Done: back to the case as it was, the row dataflow open as before.
   document.querySelector<HTMLElement>('[data-slot="setup-done"]')?.click();
   const back = await until(() => !inPanel('setup') && inPanel('row-dataflow'), 5_000);

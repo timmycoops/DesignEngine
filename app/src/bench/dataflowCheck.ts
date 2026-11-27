@@ -70,11 +70,12 @@ export async function checkDataflow(path: string, log: (line: string) => void, s
       if (!item) return null;
       item.click();
     }
-    // The menu beside it: in the Parameters list, on the row picked once it's lit; for a results table, beside its select.
+    // The menu beside it: in the Tables side's list, on the row picked once it's lit (decision 0108, workstream 4); for a
+    // results table, beside its select.
     const triggerOf = () =>
       object.kind === 'table'
         ? document.querySelector<HTMLElement>('[data-tool-panel="reserves-table"] [data-slot="object-menu"]')
-        : (document.querySelector<HTMLElement>(`[data-slot="parameters-item"][data-name="${CSS.escape(name)}"]`)?.parentElement?.querySelector<HTMLElement>('[data-slot="object-menu"]') ?? null);
+        : (document.querySelector<HTMLElement>(`[data-slot="tables-item"][data-name="${CSS.escape(name)}"]`)?.parentElement?.querySelector<HTMLElement>('[data-slot="object-menu"]') ?? null);
     let trigger: HTMLElement | null = null;
     for (let k = 0; k < 50 && !trigger; k++) {
       trigger = triggerOf();

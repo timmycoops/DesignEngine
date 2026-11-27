@@ -79,6 +79,7 @@ import { listenForChords } from './workspace/chords';
 import { FindCommand } from './workspace/FindCommand';
 import { Ribbon, type StageId } from './workspace/Ribbon';
 import { rememberSide, rememberStage, sideOf, stageOf } from './workspace/stage';
+import { openItem } from './workspace/tablesSide';
 import type { Side } from './tools';
 import type { ToolUse } from './workspace/ToolMenu';
 import type { WorksOn } from './panels/worksOn';
@@ -494,6 +495,8 @@ export default function App() {
   // plan, workstream 7), asked for from the Reserves table's Open in the case.
   const [notebookOf, setNotebookOf] = useState<{ table: string; node: string[]; n: number; edited: NotebookEdit | null } | null>(null);
   const openNotebook = useCallback((table: string, node: string[]) => {
+    // The case opened in the Tables side's list (decision 0108, workstream 4).
+    openItem('case', table);
     if (dockRef.current) showPanel(dockRef.current, 'case');
     setNotebookOf((was) => ({ table, node, n: (was?.n ?? 0) + 1, edited: null }));
   }, []);
@@ -1007,7 +1010,8 @@ export default function App() {
       const picked = await open({ multiple: false, filters: [{ name: 'Table', extensions: ['csv'] }] });
       if (typeof picked !== 'string') return;
       setStatus({ text: `Reading ${picked}…` });
-      if (await run('table.import', { path: picked })) openTool('restable');
+      // An imported table is an input, on the Tables side (decision 0108, workstream 4).
+      if (await run('table.import', { path: picked })) openTool('inputs');
     });
 
   /** Writes objects to a file picked in the save dialog, which has already asked before replacing one. */
@@ -1494,7 +1498,10 @@ export default function App() {
   return (
     <TooltipProvider delayDuration={400}>
       <div className="flex h-full flex-col">
-        <Ribbon projectName={projectName} projectPath={summary?.path ?? null} side={side} onSide={setSide} stage={stage} onStage={setStage} onFind={() => setFinding(true)} use={toolUse} />
+        {/* The ribbon reads the workspace too: on Tables it holds the case and its Run (decision 0108, workstream 4). */}
+        <WorkspaceContext.Provider value={workspace}>
+          <Ribbon projectName={projectName} projectPath={summary?.path ?? null} side={side} onSide={setSide} stage={stage} onStage={setStage} onFind={() => setFinding(true)} use={toolUse} />
+        </WorkspaceContext.Provider>
         <FindCommand open={finding} onOpenChange={setFinding} use={toolUse} />
 
         <main className="min-h-0 flex-1">

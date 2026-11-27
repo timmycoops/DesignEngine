@@ -313,9 +313,16 @@ export const TOOLS: readonly Tool[] = [
   { key: 'reserves', stage: 'geology', label: 'Reserves', tip: "interrogate blocks against a seam model, or set them beside Spry's or Deswik's numbers", icon: 'reserves', panel: 'reserves' },
   { key: 'reserves:interrogate', stage: 'geology', label: 'Interrogate', icon: 'reserves', tip: "Writes each seam grid's value onto blocks, from a seam model.", panel: 'reserves', mode: 'interrogate', command: 'solid.interrogate', step: { takes: 'blocks and a seam model' } },
   { key: 'reserves:compare', stage: 'geology', label: 'Compare', short: 'Compare blocks', tip: "Sets blocks beside Spry's or Deswik's numbers.", icon: 'compare', panel: 'reserves', mode: 'compare', command: 'solid.compare' },
-  { key: 'case', stage: 'tables', label: 'Reserves case', tip: "a reserves table's case a step at a time: the steps by stage, what each reads and does to the whole case, its settings by seam and ply to change and see the case run again, the block map and a block's strip log", icon: 'case', panel: 'case' },
+  { key: 'case', stage: 'tables', label: 'Cases', tip: "a reserves table's case a step at a time: the steps by stage, what each reads and does to the whole case, its settings by seam and ply to change and see the case run again, the block map and a block's strip log", icon: 'case', panel: 'case' },
+  // The Tables side (decision 0108, workstream 4): its panel, and the items of its list, each opened from Find a command.
+  { key: 'tables', stage: 'tables', label: 'Tables side', tip: 'the table work: inputs, cases, dataflows, parameters, results and the schedule, down the chain', icon: 'reserves-table', panel: 'tables' },
+  { key: 'inputs', stage: 'tables', label: 'Inputs', tip: "what a case reads from Design: the Objects table, and any table imported in the solids' place", icon: 'blocks', panel: 'inputs' },
+  { key: 'dataflows', stage: 'tables', label: 'Dataflows', tip: 'the dataflows a case runs, their steps and formulas, and the scripts they load', icon: 'workflow', panel: 'dataflows' },
+  { key: 'results', stage: 'tables', label: 'Results', tip: "each case's reserves table, its leaves grouped by strip, block or seam, or a node broken down from Imported to Scheduled", icon: 'reserves-table', panel: 'results' },
+  { key: 'schedule', stage: 'tables', label: 'Schedule', tip: "the schedule quantities a case's run gives, for the scheduler: its place kept, not built yet (0100)", icon: 'report', panel: 'schedule' },
   { key: 'params', stage: 'tables', label: 'Parameters', tip: 'parameter tables and dataflows edited as grids, a picked solid\'s values marked where they come from', icon: 'parameters', panel: 'params' },
-  { key: 'restable', stage: 'tables', label: 'Tables', tip: "every table: the objects, and each reserves table's leaves as a grid grouped by strip, block or seam, or a node's fields broken down from Imported to Scheduled", icon: 'reserves-table', panel: 'restable' },
+  // The Tables panel under the view: the Objects table, or any table picked at its head (decision 0108: on Design).
+  { key: 'restable', stage: 'solids', label: 'Tables', tip: "every table: the objects, and each reserves table's leaves as a grid grouped by strip, block or seam, or a node's fields broken down from Imported to Scheduled", icon: 'reserves-table', panel: 'restable' },
   { key: 'workflow:report', stage: 'always', label: 'Report', tip: "Writes a workflow's report, every case from its latest run", icon: 'report', panel: 'workflow' },
 
   // Always there, whatever the stage.
@@ -463,8 +470,9 @@ export const ROWS: Record<RowId, readonly RowItem[]> = {
     { label: 'Export solids', icon: 'solids-out', tip: 'Solids out as a zip or a folder, a DXF each', keys: ['export.selected_solids', 'export.visible_solids'] },
   ],
   geology: ['import.vulcan_grid', 'seam.suggest', 'seam.build', 'seam.relink', '|', 'reserves:interrogate', 'reserves:compare'],
-  // Until the Tables side has its list down the left (decision 0108, workstream 4).
-  tables: ['case', 'restable', 'params'],
+  // The Tables side's list down the left (decision 0108, workstream 4), in the order the work flows: no ribbon row of its
+  // own there, the list is the row; Find a command lists them.
+  tables: ['inputs', 'case', 'dataflows', 'params', 'results', 'schedule', '|', 'tables'],
 };
 
 /** At the end of every Design row: what works on whatever is picked, strings, surfaces, solids and grids alike. */
