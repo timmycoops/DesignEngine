@@ -181,30 +181,36 @@ export async function checkShell(
       else await goSide('design');
       await clickTool(key);
     };
-    const tabs = (id: PanelId) => api.getPanel(id)?.group.panels.map((p) => p.id) ?? [];
-    const front = (id: PanelId) => api.getPanel(id)?.group.activePanel?.id;
+    const tabs = (id: PanelId | 'viewport') => api.getPanel(id)?.group.panels.map((p) => p.id) ?? [];
+    const front = (id: PanelId | 'viewport') => api.getPanel(id)?.group.activePanel?.id;
     const width = (id: PanelId) => api.getPanel(id)?.group.api.width ?? 0;
-    const closeTab = async (id: PanelId) => {
-      api.getPanel(id)?.api.close();
-      await settle();
-    };
     const open = size();
     expect('no layout from before the docks is kept', localStorage.getItem('zd.workspace.layout.v3') === null && localStorage.getItem('zd.workspace.minimised.v1') === null);
-    expect('the tool dock starts at its width with Properties in it', width('properties') === TOOL_DOCK_WIDTH && tabs('properties').length === 1, { width: width('properties'), tabs: tabs('properties') });
+    expect('the right of the window starts at its width with Properties in it', width('properties') === TOOL_DOCK_WIDTH && tabs('properties').length === 1, { width: width('properties'), tabs: tabs('properties') });
 
+    const topOf = (id: PanelId) => Math.round(api.getPanel(id)?.group.element.getBoundingClientRect().top ?? 0);
+    /** The tools open in the one slot (decision 0108). */
+    const inSlot = () => api.panels.map((p) => p.id).filter((id) => ['strings', 'from_surfaces', 'surfaces', 'move', 'builder', 'cut', 'reserves', 'licence', 'viewcontrols'].includes(id));
     await tool('Cut');
     const oneTool = size();
-    expect('one tool opens as a tab beside Properties: the view keeps its width', oneTool.width === open.width && tabs('cut').includes('properties') && front('cut') === 'cut', { before: open.width, after: oneTool.width, tabs: tabs('cut') });
+    expect('a tool opens in the slot over Properties, named for the tool: the view keeps its width', oneTool.width === open.width && tabs('cut').length === 1 && !tabs('cut').includes('properties') && topOf('cut') < topOf('properties') && width('cut') === TOOL_DOCK_WIDTH && api.getPanel('cut')?.title === 'Strips by faces', {
+      before: open.width,
+      after: oneTool.width,
+      slot: tabs('cut'),
+      tab: api.getPanel('cut')?.title,
+      tops: [topOf('cut'), topOf('properties')],
+    });
     await tool('Builder');
     const twoTools = size();
+    const afterBuilder = inSlot();
     await tool('Reserves');
     await tool('Workflow');
     const allTools = size();
-    expect('two tools, then all four: the view is as wide as with one', twoTools.width === open.width && allTools.width === open.width && tabs('properties').length === 5, {
-      one: oneTool.width,
-      two: twoTools.width,
-      four: allTools.width,
-      tabs: tabs('properties'),
+    expect('one tool at a time: each asked for takes the slot from the one before; the workflow opens over the view', twoTools.width === open.width && allTools.width === open.width && afterBuilder.join() === 'builder' && inSlot().join() === 'reserves' && tabs('viewport').includes('workflow') && front('viewport') === 'workflow', {
+      after_builder: afterBuilder,
+      after_all: inSlot(),
+      over_the_view: tabs('viewport'),
+      view: [oneTool.width, twoTools.width, allTools.width],
     });
 
     await tool('Blocks');
@@ -212,12 +218,11 @@ export async function checkShell(
     await tool('Reserves table');
     await tool('Parameters');
     await tool('Face');
-    showPanel(api, 'canvas');
-    await settle();
     const tables = size();
     const tablesSide = tabs('params');
     const tablesHidden = !(api.getPanel('params')?.group.api.isVisible ?? true);
-    expect("Design's tables (Run log, Face design, the canvas) are tabs in one row under the view; the Tables side's are in a group of their own, hidden on Design", tabs('runlog').length === 3 && ['face', 'canvas'].every((id) => tabs('runlog').includes(id as PanelId)) && tablesSide.includes('restable') && tablesSide.includes('params') && !tablesSide.includes('runlog') && tablesHidden && sideNow() === 'design' && tables.width === open.width, {
+    expect("Face design and the workflow are documents over the view; the Run log under it; the Tables side's in a group of their own, hidden on Design", tabs('runlog').join() === 'runlog' && ['face', 'workflow'].every((id) => tabs('viewport').includes(id as PanelId)) && front('viewport') === 'face' && tablesSide.includes('restable') && tablesSide.includes('params') && !tablesSide.includes('runlog') && tablesHidden && sideNow() === 'design' && tables.width === open.width, {
+      over_the_view: tabs('viewport'),
       design: tabs('runlog'),
       tables_side: tablesSide,
       tables_hidden: tablesHidden,
@@ -227,14 +232,14 @@ export async function checkShell(
     expect('the results dock grows to the height a table asks for, and no further', blocksHeight === 400 && (api.getPanel('runlog')?.group.api.height ?? 0) === 400, { with_tables: blocksHeight, with_them_all: api.getPanel('runlog')?.group.api.height });
 
     // A tool closed, its dock minimised, and the tool asked for from the toolbar.
-    await closeTab('builder');
-    document.querySelector<HTMLButtonElement>('button[aria-label^="Minimise Properties"]')?.click();
+    const slotName = api.getPanel('reserves')?.title ?? '';
+    document.querySelector<HTMLButtonElement>(`button[aria-label^="Minimise ${slotName}"]`)?.click();
     await settle();
     const toolsAway = strip('right');
     await tool('Builder');
-    expect('a minimised tool dock comes back with the tool asked for in front', toolsAway.includes('Cut solids') && strip('right').length === 0 && front('properties') === 'builder' && size().width === open.width, {
+    expect('a minimised tool slot comes back with the tool asked for in it', toolsAway.includes(slotName) && strip('right').length === 0 && inSlot().join() === 'builder' && front('builder') === 'builder' && size().width === open.width, {
       strip_while_minimised: toolsAway,
-      front: front('properties'),
+      slot: inSlot(),
       view: size().width,
     });
 
@@ -251,7 +256,7 @@ export async function checkShell(
     await key('`');
     const viewOnly = size();
     await key('`');
-    expect('` with a table filling the window gives the window to the view, and ` again brings everything back', viewOnly.width >= window.innerWidth - 8 && Math.abs(size().width - tables.width) <= 10 && tabs('runlog').length === 3, { view_only: viewOnly, back: size() });
+    expect('` with a table filling the window gives the window to the view, and ` again brings everything back', viewOnly.width >= window.innerWidth - 8 && Math.abs(size().width - tables.width) <= 10 && tabs('runlog').join() === 'runlog', { view_only: viewOnly, back: size() });
 
     // A dock with nothing left in it goes, and the view takes its room; opened again, the view gives it back.
     const layers = width('layers');
@@ -327,8 +332,8 @@ export async function checkShell(
     })()).filter((m) => m.tool);
     await clickTool('strings:set_closed');
     const stringsPanel = () => api.getPanel('strings')?.group.element.querySelector<HTMLElement>('[data-tool-panel="strings"]') ?? null;
-    const stringTool = () => stringsPanel()?.querySelector<HTMLSelectElement>('select[aria-label="String tool"]')?.value ?? '';
-    expect('a tool folded into More does what it does on the row', foldedTools.some((m) => m.tool === 'strings:set_closed') && front('strings') === 'strings' && stringTool() === 'set_closed', {
+    const stringTool = () => api.getPanel('strings')?.title ?? '';
+    expect('a tool folded into More does what it does on the row, the slot named for it, with no tool list of its own', foldedTools.some((m) => m.tool === 'strings:set_closed') && front('strings') === 'strings' && stringTool() === 'Close' && !stringsPanel()?.querySelector('select[aria-label="String tool"]'), {
       in_more: foldedTools.map((m) => m.words),
       strings_panel_set_to: stringTool(),
     });
@@ -379,7 +384,7 @@ export async function checkShell(
     const projectWas = ['A project (.zdp)…', 'An older project folder (.zdproj)…'];
     const importWas = ['Surfaces…', 'Vulcan grid…', 'Strings…', 'Solids', 'Deswik drawing (.dcf)…', 'Spry project (.spry)…', 'A table (CSV)…', 'Suggest a stack definition (CSV)…', 'Build and check from a definition…', 'Relink geology…'];
     const exportWas = ['Selected to DXF…', 'Selected strings to CSV…', 'Selected solids to a zip…', 'Everything visible to DXF…', 'Visible strings to CSV…', 'Visible solids to a zip…'];
-    const panelsWas = ['Layers', 'Properties', 'Strings', 'Strings from surfaces', 'Surfaces', 'Move and copy', 'Builder', 'Cut solids', 'Reserves', 'Workflow', 'Licence', 'View controls', 'Run log', 'Tables', 'Reserves case', 'Parameters', 'Workflow canvas', 'Face design', 'Hide every panel, or bring them back`', 'Reset layout'];
+    const panelsWas = ['Layers', 'Properties', 'Strings', 'Strings from surfaces', 'Surfaces', 'Move and copy', 'Builder', 'Cut solids', 'Reserves', 'Workflow', 'Licence', 'View controls', 'Run log', 'Tables', 'Reserves case', 'Parameters', 'Face design', 'Hide every panel, or bring them back`', 'Reset layout'];
     const reads = (menu: { words: string }[], was: string[]) => menu.map((m) => m.words).join('|') === was.join('|');
     expect('the Open, Import, Export and Panels menus read as they should, what needs a selection off without one', reads(projectMenu, projectWas) && reads(importMenu, importWas) && reads(exportMenu, exportWas) && reads(panelsMenu, panelsWas) && exportMenu.map((m) => m.off).join() === 'true,true,true,false,false,false', {
       project: projectMenu.map((m) => m.words),
@@ -413,8 +418,7 @@ export async function checkShell(
     const litAtStart = lit();
     await clickTool('cut:seams');
     const litSeams = lit();
-    [...(api.getPanel('cut')?.group.element.querySelectorAll<HTMLButtonElement>('[role="group"][aria-label="What to do"] button') ?? [])].find((b) => b.textContent?.trim() === 'By benches')?.click();
-    await settle();
+    await clickTool('cut:benches');
     const litBenches = lit();
     await clickTool('restable:objects');
     const litBlocks = lit();
@@ -662,7 +666,8 @@ export async function checkShell(
     await goStage('strings');
     await clickTool('strings:offset');
     const stringsNow = () => api.getPanel('strings')?.group.element.querySelector<HTMLElement>('[data-tool-panel="strings"]') ?? null;
-    const setTo = () => stringsNow()?.querySelector<HTMLSelectElement>('select[aria-label="String tool"]')?.value ?? '';
+    // The tool the slot holds, read off its tab, which is named for the tool (decision 0108): the panel has no list of its own.
+    const setTo = () => TOOLS.find((t) => t.panel === 'strings' && t.mode && t.label === api.getPanel('strings')?.title)?.mode ?? '';
     const stringsOn = () => stringsNow()?.querySelector('[data-slot="strings-on"]')?.textContent?.trim() ?? '';
     const goButton = () => [...(stringsNow()?.querySelectorAll<HTMLButtonElement>('button') ?? [])].at(-1) ?? null;
     const typeNumber = async (label: string, value: string) => {
@@ -713,15 +718,10 @@ export async function checkShell(
     const toe = (await stringsNamed('Bench toe')).find((o) => o.name === 'Bench toe');
     const measures = toe ? (await objectDetails(toe.id)).measures : null;
     const rls = measures?.kind === 'string' ? measures.points.map((p) => p[2]) : [];
-    // The panel's own choice changes the tool too, and the row's light follows it.
-    const chooser = stringsNow()?.querySelector<HTMLSelectElement>('select[aria-label="String tool"]');
-    if (chooser) {
-      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set?.call(chooser, 'reverse');
-      chooser.dispatchEvent(new Event('change', { bubbles: true }));
-    }
-    await settle();
+    // Another tool picked on the row takes the slot, and the row's light follows it.
+    await clickTool('strings:reverse');
     const litForReverse = lit();
-    expect("Set elevation sets the string's RLs, and the row's light follows the panel's choice", litForRl.join() === 'strings:set_elevation' && rlSays === 'Set Bench toe to RL 120' && rls.length === 2 && rls.every((z) => z === 120) && litForReverse.join() === 'strings:reverse', {
+    expect("Set elevation sets the string's RLs, and the row's light follows the tool picked", litForRl.join() === 'strings:set_elevation' && rlSays === 'Set Bench toe to RL 120' && rls.length === 2 && rls.every((z) => z === 120) && litForReverse.join() === 'strings:reverse', {
       lit: litForRl,
       button: rlSays,
       rls,
@@ -762,15 +762,14 @@ export async function checkShell(
       await ctrlClick(toeAt(2));
       await wait(500);
     };
-    const choose = async (name: string, value: string) => {
-      const select = stringsNow()?.querySelector<HTMLSelectElement>(`select[aria-label="${name}"]`);
-      if (!select) return false;
-      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set?.call(select, value);
-      select.dispatchEvent(new Event('change', { bubbles: true }));
-      await settle();
+    /** A string tool picked as a planner picks it: its group's tab, then the tool on the row (decision 0108). */
+    const useTool = async (mode: string) => {
+      const picked = toolByKey(`strings:${mode}`);
+      if (!picked) return false;
+      await goStage(picked.stage);
+      await clickTool(picked.key);
       return true;
     };
-    const useTool = (mode: string) => choose('String tool', mode);
     const go = async (ms = 1200) => {
       const says = goButton()?.textContent?.trim() ?? '';
       goButton()?.click();
@@ -997,7 +996,7 @@ export async function checkShell(
     await key('Escape');
     resetLayout(api);
     await settle();
-    const everyPanel = ['strings', 'builder', 'cut', 'reserves', 'workflow', 'restable', 'params', 'canvas', 'face'] as const;
+    const everyPanel = ['strings', 'builder', 'cut', 'reserves', 'workflow', 'restable', 'params', 'face'] as const;
     for (const id of everyPanel) showPanel(api, id);
     await settle();
     const toFront = async (id: PanelId) => {
@@ -1021,7 +1020,8 @@ export async function checkShell(
       const top = stripOf(id)?.getBoundingClientRect().bottom ?? 0;
       const control = inPanel(id, 'button, input, select').find((e) => !e.closest('[data-slot="panel-head"]'));
       const words = inPanel(id, 'p, div, span, th, td, h3').find((e) => !e.closest('[data-slot="panel-head"]') && e.children.length === 0 && (e.textContent?.trim() ?? '') !== '');
-      const first = control ?? words;
+      // Whichever comes first: a panel whose head is followed by what it's on, then its settings, starts with words.
+      const first = control && words ? (control.getBoundingClientRect().top <= words.getBoundingClientRect().top ? control : words) : (control ?? words);
       return first ? Math.round(first.getBoundingClientRect().top - top) : null;
     };
     const toolPanels = ['strings', 'builder', 'cut', 'reserves', 'workflow'] as const;
@@ -1054,30 +1054,26 @@ export async function checkShell(
     await settle();
     expect('the rest of what a tool does is in a tip at the end of the line', !!mark && tip.includes('Rebuild from here') && (lineOf('builder')?.title ?? '').includes('Rebuild from here'), { tip: tip.slice(0, 140), tips_open: tipsOpen, focused, mark_found: !!mark, window_has_focus: document.hasFocus() });
 
-    await toFront('cut');
-    const choice = groupOf('cut')?.querySelector<HTMLElement>('[role="group"][aria-label="What to do"]');
-    const choices = [...(choice?.querySelectorAll<HTMLButtonElement>('button') ?? [])];
+    await goStage('solids');
     const lines: string[] = [];
+    const named: string[] = [];
     let linesFit = true;
-    for (const b of choices) {
-      b.click();
-      await settle();
+    for (const mode of ['strips', 'cut', 'seams', 'benches', 'polygons', 'between']) {
+      await clickTool(`cut:${mode}`);
       const line = lineOf('cut');
       lines.push(line?.textContent?.trim() ?? '');
+      named.push(api.getPanel('cut')?.title ?? '');
       linesFit &&= !!line && line.scrollWidth <= line.clientWidth;
     }
-    choices[0]?.click();
-    await settle();
-    expect("Cut solids' line says what it's set to do, a line a choice, each fitting the dock", lines.length === 6 && new Set(lines).size === 6 && linesFit, { lines });
-    const rows = new Set(choices.map((b) => Math.round(b.getBoundingClientRect().top))).size;
-    const cutShort = choices.filter((b) => b.scrollWidth > b.clientWidth).map((b) => b.textContent?.trim());
-    const choiceBox = boxOf(choice);
-    const cutBox = boxOf(groupOf('cut'));
-    expect("Cut solids' six choices show whole in the dock, three to a row", choices.length === 6 && rows === 2 && cutShort.length === 0 && !!choiceBox && !!cutBox && choiceBox.right <= cutBox.right && choiceBox.left >= cutBox.left, {
-      rows,
-      cut_short: cutShort,
-      choice: choiceBox,
-      dock: cutBox,
+    expect("Cut solids' line and its tab say the tool picked on the row, a line a tool, each fitting the slot", lines.length === 6 && new Set(lines).size === 6 && linesFit && named.join('|') === 'Strips by faces|By surface or RL|By seams|By benches|By blocks|Between surfaces', { lines, named });
+    await clickTool('cut:seams');
+    const ownChoice = groupOf('cut')?.querySelector('[role="group"][aria-label="What to do"]');
+    const takeSaid = groupOf('cut')?.querySelector('[data-slot="works-on-said"]')?.textContent ?? '';
+    const footBar = document.querySelector<HTMLElement>('[data-slot="works-on"]');
+    expect('Cut solids has no choice of its own: the row picks the tool, and what it works on is set at the foot of the view', !ownChoice && takeSaid.includes('at the foot of the view') && !!footBar, {
+      own_choice: !!ownChoice,
+      take: takeSaid,
+      bar: footBar?.textContent ?? null,
     });
 
     const firsts: Record<string, number | null> = {};
@@ -1110,7 +1106,8 @@ export async function checkShell(
       };
       await picture('docks-default', 'strings', []);
       await picture('docks-solids', 'solids', ['builder', 'reserves'], ['cut:seams', 'restable:objects']);
-      await picture('docks-walls', 'walls', ['cut'], ['builder', 'face']);
+      await picture('docks-walls', 'walls', [], ['builder', 'face']);
+      await picture('workflow-document', 'walls', [], ['workflow']);
       await picture('docks-reserves', 'geology', ['cut'], ['reserves:interrogate']);
       await picture('tables-case', 'tables', [], ['case']);
       await picture('tables-parameters', 'tables', [], ['params']);

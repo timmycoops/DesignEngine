@@ -2,6 +2,7 @@ import { createContext, useContext } from 'react';
 import type { Colouring, Contours, Dataflow, LogEntry, ParameterTable, ProjectSummary, ReservesFilter, RunRecord, Vec3, WorkflowRecord } from '@/bridge';
 import type { Bands } from '@/viewport/rlColour';
 import type { RlShown, SeamShown } from '@/viewport/sceneSync';
+import type { WorksOn } from '@/panels/worksOn';
 import type { PanelId } from './panels';
 
 /** The workflow steps are being added to, and where the next goes (from 0; the end when left out). */
@@ -114,6 +115,9 @@ export interface Workspace {
   toolMode: (panel: PanelId, mode: string | null) => void;
   /** The tool panels showing now, each the tab in front of its dock: a tool asks in turn only while it's there (decision 0092). */
   panelsShown: PanelId[];
+  /** What the tool in front works on: picked, its layer or on show (decision 0108), set at the foot of the view. */
+  worksOn: WorksOn;
+  setWorksOn: (worksOn: WorksOn) => void;
   /** Runs an engine command; reports the outcome on the status line. False if it failed. */
   run: (name: string, params: Record<string, unknown>) => Promise<boolean>;
   /** The same, handing back the run's record, or why it failed, for a panel to show. */

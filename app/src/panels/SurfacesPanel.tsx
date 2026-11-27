@@ -2,7 +2,7 @@ import { Check } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { concealed, type ObjectSummary } from '@/bridge';
 import { Input } from '@/design-system/ui/input';
-import { type Asker, AskSteps, Choice, Field, NumberInput, NumberOrBlank, resultParams, type RunReport, Select, type ToolAction, ToolPanel, ToolSection, useAsking, useResultAs } from '@/design-system/kit';
+import { type Asker, AskSteps, Choice, Field, NumberInput, NumberOrBlank, resultParams, type RunReport, type ToolAction, ToolPanel, ToolSection, useAsking, useResultAs } from '@/design-system/kit';
 import { nearestString } from './stringSide';
 import { choiceWords } from '@/tools';
 import { useWorkspace } from '@/workspace/context';
@@ -38,7 +38,7 @@ const TRIMS = new Set(['string', 'surface', 'grid', 'solid']);
 
 /** A click this close to a string in plan (m) is on it. */
 const CLICK_ON_A_STRING = 2;
-const { labels: MODE_LABELS, lines: MODE_LINES } = choiceWords('surfaces', MODES);
+const { lines: MODE_LINES } = choiceWords('surfaces', MODES);
 
 const SURFACES = new Set(['surface', 'grid']);
 
@@ -314,17 +314,6 @@ export function SurfacesPanel() {
 
   return (
     <ToolPanel title="Surfaces" panel="surfaces" summary={MODE_LINES[mode]} result={report} action={action}>
-      <ToolSection>
-        <Field label="Tool">
-          <Select value={mode} aria-label="Surfaces tool" onChange={(e) => setMode(e.target.value as Mode)}>
-            {MODES.map((m) => (
-              <option key={m} value={m}>
-                {MODE_LABELS[m]}
-              </option>
-            ))}
-          </Select>
-        </Field>
-      </ToolSection>
 
       {mode === 'merge' && (
         <AskSteps steps={[{ label: 'The surfaces, grids and solids to merge', value: toMerge.length > 0 ? `${toMerge.length} picked` : undefined }, { label: `The ${which}, merged` }]} at={asking.at} />

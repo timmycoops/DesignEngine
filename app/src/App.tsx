@@ -74,13 +74,14 @@ import { typing } from './viewport/camera';
 import { DETAIL_DEFAULT, FIELD_OF_VIEW_DEFAULT, type FrameStats, triangleWords, Viewport } from './viewport/Viewport';
 import { type AddingTo, type Draft, type FieldColour, type NotebookEdit, type ViewMenuAt, type Workspace as WorkspaceState, WorkspaceContext } from './workspace/context';
 import { ALL_PANELS_KEY, isBeside, type PanelId, placeBeside, resetLayout, showPanel, toggleAllPanels, Workspace } from './workspace/Workspace';
-import { inUse, type Tool, type ToolAction, type ToolNeeds } from './tools';
+import { inUse, type Tool, type ToolAction, toolByKey, type ToolNeeds } from './tools';
 import { listenForChords } from './workspace/chords';
 import { FindCommand } from './workspace/FindCommand';
 import { Ribbon, type StageId } from './workspace/Ribbon';
 import { rememberSide, rememberStage, sideOf, stageOf } from './workspace/stage';
 import type { Side } from './tools';
 import type { ToolUse } from './workspace/ToolMenu';
+import type { WorksOn } from './panels/worksOn';
 import { onLook } from './viewport/look';
 
 interface Status {
@@ -523,7 +524,11 @@ export default function App() {
   // What the ribbon lights: the panels in front in their docks, and what each is set to do, as the panels say.
   const [panelsShown, setPanelsShown] = useState<PanelId[]>([]);
   const [panelModes, setPanelModes] = useState<Partial<Record<PanelId, string>>>({});
+  const [worksOn, setWorksOn] = useState<WorksOn>('picked');
   const toolMode = useCallback((panel: PanelId, mode: string | null) => {
+    // The tool slot's tab says the tool in it (Offset, By seams), not the panel that holds it (decision 0108).
+    const named = mode ? toolByKey(`${panel}:${mode}`) : undefined;
+    if (named) dockRef.current?.getPanel(panel)?.api.setTitle(named.label);
     setPanelModes((was) => {
       if ((was[panel] ?? null) === mode) return was;
       const { [panel]: _gone, ...rest } = was;
@@ -1306,6 +1311,8 @@ export default function App() {
       openTool,
       toolAsk,
       toolMode,
+      worksOn,
+      setWorksOn,
       panelsShown,
       notebookOf,
       openNotebook,
@@ -1355,7 +1362,7 @@ export default function App() {
       viewMenu,
       closeViewMenu: () => setViewMenu(null),
     }),
-    [viewMenu, summary, log, selected, selection, activeLayer, viewportHost, viewportMounted, select, setSelection, toggleSelected, zoomTo, setActiveLayer, setVisible, setLayersShown, setObjectsShown, changeLayerFilter, changeReservesFilter, changeLooks, changeLayerOpacity, changeContours, rlShown, run, runRecord, clearRefusal, runWorkflow, runAllCases, addWasteAllocation, captureWorkflow, addingTo, workflowPick, addStep, seamViews, colourSeamBlocks, blocksColouredBy, colourBlocksByField, fieldColoured, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, frameLine, preferLines, pickPoint, pickLine, pickString, pickObjects, finishObjects, cancelPicks, vertexPicks, mode, typeVertex, openTool, toolAsk, toolMode, panelsShown, notebookOf, openNotebook, runInNotebook, drafts],
+    [viewMenu, summary, log, selected, selection, activeLayer, viewportHost, viewportMounted, select, setSelection, toggleSelected, zoomTo, setActiveLayer, setVisible, setLayersShown, setObjectsShown, changeLayerFilter, changeReservesFilter, changeLooks, changeLayerOpacity, changeContours, rlShown, run, runRecord, clearRefusal, runWorkflow, runAllCases, addWasteAllocation, captureWorkflow, addingTo, workflowPick, addStep, seamViews, colourSeamBlocks, blocksColouredBy, colourBlocksByField, fieldColoured, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, frameLine, preferLines, pickPoint, pickLine, pickString, pickObjects, finishObjects, cancelPicks, vertexPicks, mode, typeVertex, openTool, toolAsk, toolMode, worksOn, panelsShown, notebookOf, openNotebook, runInNotebook, drafts],
   );
 
   /** The view's own tools, for the bar on the view (decision 0076). The keys below do the same. */

@@ -24,10 +24,9 @@ import { ReservesPanel } from '@/panels/ReservesPanel';
 import { RunLogPanel } from '@/panels/RunLogPanel';
 import { StringsPanel } from '@/panels/StringsPanel';
 import { ViewportPanel } from '@/panels/ViewportPanel';
-import { WorkflowCanvas } from '@/panels/WorkflowCanvas';
 import { TablesPanel } from '@/panels/TablesPanel';
 import { Parameters } from '@/panels/ParametersPanel';
-import { WorkflowPanel } from '@/panels/WorkflowPanel';
+import { WorkflowDocument } from '@/panels/WorkflowDocument';
 import { SurfacesPanel } from '@/panels/SurfacesPanel';
 import { LicencePanel } from '@/panels/LicencePanel';
 import { ViewControlsPanel } from '@/panels/ViewControlsPanel';
@@ -49,13 +48,13 @@ const components: Record<PanelId | 'viewport' | (typeof RETIRED)[number], () => 
   builder: BuilderPanel,
   cut: CutPanel,
   reserves: ReservesPanel,
-  workflow: WorkflowPanel,
-  canvas: WorkflowCanvas,
+  workflow: WorkflowDocument,
   restable: TablesPanel,
   // A tab no longer made, drawn as nothing until a saved layout's copy of it is closed.
   blocks: () => null,
   notebook: () => null,
   setup: () => null,
+  canvas: () => null,
   case: ReservesCasePanel,
   params: Parameters,
   licence: LicencePanel,
@@ -67,7 +66,7 @@ const components: Record<PanelId | 'viewport' | (typeof RETIRED)[number], () => 
  * (Tables and scripts plan, decision 1); the Dataflow and Setup tabs, now the Reserves case tab and its Setup (Reserves
  * case plan, decision 8). Opened from a saved layout, each is closed at once, the rest kept as saved.
  */
-const RETIRED = ['blocks', 'notebook', 'setup'] as const;
+const RETIRED = ['blocks', 'notebook', 'setup', 'canvas'] as const;
 
 /** The key that hides every panel, so the viewport fills the window, and brings them back. */
 export const ALL_PANELS_KEY = '`';
@@ -301,6 +300,9 @@ function dockGroup(api: DockviewApi, dock: Dock): DockviewGroupPanel | undefined
 /** The room a dock is made with: a width beside the view, a height under it. */
 const dockSize = (panel: (typeof PANELS)[number]) => (panel.dock === 'results' ? { height: panel.size } : { width: panel.size });
 
+/** The tools that share the one slot: a tool in front closes the one before it (decision 0108). */
+const inSlot = (id: string) => dockOf(id) === 'tools';
+
 function addViewport(api: DockviewApi) {
   // 'always' keeps the canvas in the page while other tabs share its group.
   api.addPanel({ id: 'viewport', component: 'viewport', tabComponent: 'fixed', title: 'Viewport', renderer: 'always' });
@@ -332,6 +334,23 @@ function defaultLayout(api: DockviewApi) {
   if (api.width === 0 || api.height === 0) requestAnimationFrame(size);
 }
 
+/**
+ * A layout saved before the tool slot (decision 0108) put right: the tool in front kept and the others closed,
+ * Properties in a group of its own under it, and Face design over the view.
+ */
+function tidyDocks(api: DockviewApi) {
+  const tools = api.panels.filter((p) => inSlot(p.id));
+  const kept = tools.find((p) => p.group.activePanel?.id === p.id) ?? tools[0];
+  for (const p of tools) if (p !== kept) p.api.close();
+  const props = api.getPanel('properties');
+  if (props && props.group.panels.length > 1) props.api.moveTo({ group: props.group, position: 'bottom' });
+  for (const p of PANELS.filter((q) => q.dock === 'document')) {
+    const open = api.getPanel(p.id);
+    const view = api.getPanel('viewport');
+    if (open && view && open.group !== view.group) open.api.moveTo({ group: view.group, position: 'center' });
+  }
+}
+
 /** The saved layout from the last session, or the default one if there is none or it no longer fits. */
 function restoreLayout(api: DockviewApi) {
   try {
@@ -346,6 +365,7 @@ function restoreLayout(api: DockviewApi) {
         if (shown && shown.title !== p.title) shown.api.setTitle(p.title);
       }
       if (!api.getPanel('viewport')) addViewport(api);
+      tidyDocks(api);
       bareView(api);
       keepMounted(api);
       return;
@@ -412,9 +432,28 @@ function bringToFront(api: DockviewApi, id: PanelId) {
     return open.api.setActive();
   }
   const panel = PANELS.find((p) => p.id === id)!;
+  // A document opens over the view, a tab beside it: the view's tab comes back as the document's is closed.
+  if (panel.dock === 'document') {
+    api.addPanel({ id, component: id, title: panel.title, position: { referencePanel: 'viewport', direction: 'within' } });
+    bareView(api);
+    return;
+  }
+  // One tool at a time: the one in the slot makes way for the one asked for.
+  if (inSlot(id)) for (const other of api.panels.filter((p) => p.id !== id && inSlot(p.id))) other.api.close();
   const dock = dockGroup(api, panel.dock);
   if (!dock) {
-    const position = panel.dock === 'results' ? ({ referencePanel: 'viewport', direction: 'below' } as const) : ({ direction: panel.dock === 'left' ? 'left' : 'right' } as const);
+    // The tool slot sits over Properties, the inspector, where it's open; else down the right of the window.
+    const props = panel.dock === 'tools' ? api.getPanel('properties') : undefined;
+    const position =
+      panel.dock === 'results'
+        ? ({ referencePanel: 'viewport', direction: 'below' } as const)
+        : props && props.group.api.isVisible
+          ? ({ referencePanel: 'properties', direction: 'above' } as const)
+          : ({ direction: panel.dock === 'left' ? 'left' : 'right' } as const);
+    if (props && props.group.api.isVisible) {
+      api.addPanel({ id, component: id, title: panel.title, position });
+      return;
+    }
     const held = dockSizes(api);
     const made = api.addPanel({ id, component: id, title: panel.title, position }).group;
     made.api.setSize(dockSize(panel));

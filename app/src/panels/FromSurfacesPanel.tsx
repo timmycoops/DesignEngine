@@ -2,7 +2,7 @@ import { Check } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ObjectSummary } from '@/bridge';
 import { Input } from '@/design-system/ui/input';
-import { type Asker, AskSteps, Field, NumberInput, NumberOrBlank, type RunReport, Select, type ToolAction, ToolPanel, ToolSection, useAsking } from '@/design-system/kit';
+import { type Asker, AskSteps, Field, NumberInput, NumberOrBlank, type RunReport, type ToolAction, ToolPanel, ToolSection, useAsking } from '@/design-system/kit';
 import { choiceWords } from '@/tools';
 import { useWorkspace } from '@/workspace/context';
 
@@ -26,7 +26,7 @@ import { useWorkspace } from '@/workspace/context';
 type Mode = 'where_surfaces_meet' | 'contours' | 'outline' | 'from_section';
 
 const MODES: readonly Mode[] = ['where_surfaces_meet', 'contours', 'outline', 'from_section'];
-const { labels: MODE_LABELS, lines: MODE_LINES } = choiceWords('from_surfaces', MODES);
+const { lines: MODE_LINES } = choiceWords('from_surfaces', MODES);
 
 const SURFACES = new Set(['surface', 'grid']);
 const MESHES = new Set(['surface', 'grid', 'solid']);
@@ -217,17 +217,6 @@ export function FromSurfacesPanel() {
 
   return (
     <ToolPanel title="Strings from surfaces" panel="from_surfaces" summary={MODE_LINES[mode]} result={report} action={action}>
-      <ToolSection>
-        <Field label="Tool">
-          <Select value={mode} aria-label="Strings from surfaces tool" onChange={(e) => setMode(e.target.value as Mode)}>
-            {MODES.map((m) => (
-              <option key={m} value={m}>
-                {MODE_LABELS[m]}
-              </option>
-            ))}
-          </Select>
-        </Field>
-      </ToolSection>
 
       {mode === 'where_surfaces_meet' && (
         <AskSteps

@@ -87,7 +87,7 @@ const ON_VERTICES: readonly Mode[] = ['set_grade', 'set_elevation', 'drape'];
 /** How far from a string a click on it may land and still be it, in plan (m). Clicks snap, so on it they're on it. */
 const CLICK_ON_A_STRING = 2;
 /** Each tool's name, and the line it puts at the panel's head, from the one tool list. */
-const { labels: MODE_LABELS, lines: MODE_LINES } = choiceWords('strings', MODES);
+const { lines: MODE_LINES } = choiceWords('strings', MODES);
 
 /** The tools that work on one string, the last picked: they work at a vertex. */
 const ONE_STRING: readonly Mode[] = ['split'];
@@ -579,17 +579,6 @@ export function StringsPanel() {
   const several = mode === 'number_across' || mode === 'polygons_from_lines' || mode === 'project' || mode === 'surface_between' || mode === 'join';
   return (
     <ToolPanel title="Strings" panel="strings" summary={MODE_LINES[mode]} result={report} action={action}>
-      <ToolSection>
-        <Field label="Tool">
-          <Select value={mode} aria-label="String tool" onChange={(e) => setMode(e.target.value as Mode)}>
-            {MODES.map((m) => (
-              <option key={m} value={m}>
-                {MODE_LABELS[m]}
-              </option>
-            ))}
-          </Select>
-        </Field>
-      </ToolSection>
 
       {ASKS.includes(mode) && (mode !== 'split' || splitBy === 'click') && <AskSteps steps={askSteps} at={asking.at} />}
 

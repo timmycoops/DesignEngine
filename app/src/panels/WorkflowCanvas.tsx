@@ -1,11 +1,11 @@
 import { Background, Controls, type Edge, Handle, MarkerType, type Node, type NodeProps, Position, ReactFlow } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { ListOrdered, PanelLeftClose, PanelLeftOpen, Pause, Scan } from 'lucide-react';
+import { PanelLeftClose, PanelLeftOpen, Pause, Scan } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import type { WorkflowStep } from '@/bridge';
-import { Field, IconButton, Select, StatusBadge } from '@/design-system/kit';
+import { IconButton, StatusBadge } from '@/design-system/kit';
 import { useWorkspace } from '@/workspace/context';
-import { BASE, caseValue, changesOfCase, ruleWords, type SettingRow, settingsOfStep, stepsOfCase, withSetting } from './workflow';
+import { caseValue, changesOfCase, ruleWords, type SettingRow, settingsOfStep, stepsOfCase, withSetting } from './workflow';
 import { type GraphNode, rewire, workflowGraph } from './workflowGraph';
 import { LastBadge, plural, StepSettings, usePickedWorkflow } from './workflowParts';
 import { useLook } from '../workspace/useLook';
@@ -141,12 +141,12 @@ const nodeTypes = { step: StepNode, pause: PauseNode, input: InputNode };
 
 export function WorkflowCanvas() {
   const look = useLook();
-  const { summary, setSelection, zoomTo, openPanel, openTool, setAddingTo } = useWorkspace();
+  const { summary, setSelection, zoomTo, openTool, setAddingTo } = useWorkspace();
   const [toolsOpen, setToolsOpen] = useState(true);
-  const { workflows, chosen, workflow, revision, caseName, pick, pickCase, save } = usePickedWorkflow();
+  // The workflow and case picked beside it, in the same document (decision 0108).
+  const { chosen, workflow, revision, caseName, save } = usePickedWorkflow();
   const [focus, setFocus] = useState<number | null>(null);
   const [said, setSaid] = useState<{ error?: string; text?: string }>({});
-  const cases = workflow?.cases ?? [];
 
   const graph = useMemo(() => (workflow ? workflowGraph({ ...workflow, steps: stepsOfCase(workflow, caseName) }) : null), [workflow, caseName]);
   const changes = useMemo(() => (workflow ? changesOfCase(workflow, caseName) : new Map<number, number>()), [workflow, caseName]);
@@ -246,24 +246,6 @@ export function WorkflowCanvas() {
               <PanelLeftOpen />
             </IconButton>
           )}
-          <Field label="Workflow">
-            <Select value={chosen.id} aria-label="Canvas workflow" onChange={(e) => pick(e.target.value)}>
-              {workflows.map((o) => (
-                <option key={o.id} value={o.id}>
-                  {o.name}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="Case">
-            <Select value={caseName} aria-label="Canvas case" onChange={(e) => pickCase(e.target.value)}>
-              {[BASE, ...cases.map((c) => c.name)].map((name) => (
-                <option key={name} value={name}>
-                  {name}
-                </option>
-              ))}
-            </Select>
-          </Field>
           <span className="min-w-0 flex-1 truncate text-muted-foreground">
           {said.error ? <span className="text-destructive">{said.error}</span> : said.text ? <span className="text-ok">{said.text}</span> : 'Drag a tool onto a step to add one after it; drag from a step’s right edge onto a later step’s input to wire it; click a step for its settings'}
           </span>
@@ -310,9 +292,6 @@ export function WorkflowCanvas() {
             </span>
             <IconButton label="Select and zoom to what it last made" disabled={!focused.last?.made.length} onClick={() => show(focused)}>
               <Scan />
-            </IconButton>
-            <IconButton label="The steps in order, in the Workflow panel" onClick={() => openPanel('workflow')}>
-              <ListOrdered />
             </IconButton>
           </div>
           <div className="flex gap-1">

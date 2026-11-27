@@ -3,9 +3,13 @@
  * as a tab in the tool dock on the right, beside Properties, and a table as a tab in the results dock under the view.
  * Kept free of React, so the tool list and the tests can read it.
  */
-export type PanelId = 'layers' | 'properties' | 'strings' | 'from_surfaces' | 'surfaces' | 'move' | 'builder' | 'cut' | 'reserves' | 'workflow' | 'runlog' | 'restable' | 'case' | 'params' | 'canvas' | 'face' | 'licence' | 'viewcontrols';
+export type PanelId = 'layers' | 'properties' | 'strings' | 'from_surfaces' | 'surfaces' | 'move' | 'builder' | 'cut' | 'reserves' | 'workflow' | 'runlog' | 'restable' | 'case' | 'params' | 'face' | 'licence' | 'viewcontrols';
 
-export type Dock = 'left' | 'tools' | 'results';
+/**
+ * Where a panel opens (decisions 0076, 0108): the tree on the left; the one tool slot on the right, a tool at a time;
+ * the inspector (Properties) under it; the tables under the view; or a document over the view, as a tab beside it.
+ */
+export type Dock = 'left' | 'tools' | 'inspector' | 'results' | 'document';
 
 /**
  * The side of the app a panel is on (decision 0108): Design for the view's work, Tables for the table work, `both` for
@@ -22,7 +26,7 @@ export const TOOL_DOCK_WIDTH = 400;
  */
 export const PANELS: readonly { id: PanelId; title: string; dock: Dock; size: number; side?: PanelSide }[] = [
   { id: 'layers', title: 'Layers', dock: 'left', size: 280 },
-  { id: 'properties', title: 'Properties', dock: 'tools', size: TOOL_DOCK_WIDTH },
+  { id: 'properties', title: 'Properties', dock: 'inspector', size: TOOL_DOCK_WIDTH },
   { id: 'strings', title: 'Strings', dock: 'tools', size: TOOL_DOCK_WIDTH },
   { id: 'from_surfaces', title: 'Strings from surfaces', dock: 'tools', size: TOOL_DOCK_WIDTH },
   { id: 'surfaces', title: 'Surfaces', dock: 'tools', size: TOOL_DOCK_WIDTH },
@@ -30,7 +34,8 @@ export const PANELS: readonly { id: PanelId; title: string; dock: Dock; size: nu
   { id: 'builder', title: 'Builder', dock: 'tools', size: TOOL_DOCK_WIDTH },
   { id: 'cut', title: 'Cut solids', dock: 'tools', size: TOOL_DOCK_WIDTH },
   { id: 'reserves', title: 'Reserves', dock: 'tools', size: TOOL_DOCK_WIDTH },
-  { id: 'workflow', title: 'Workflow', dock: 'tools', size: TOOL_DOCK_WIDTH },
+  // The workflow and its canvas, one document over the view (decision 0108, decision 7).
+  { id: 'workflow', title: 'Workflow', dock: 'document', size: 0 },
   { id: 'licence', title: 'Licence', dock: 'tools', size: TOOL_DOCK_WIDTH },
   { id: 'viewcontrols', title: 'View controls', dock: 'tools', size: TOOL_DOCK_WIDTH },
   { id: 'runlog', title: 'Run log', dock: 'results', size: 200 },
@@ -40,8 +45,8 @@ export const PANELS: readonly { id: PanelId; title: string; dock: Dock; size: nu
   // A reserves table's case a step at a time (Reserves case plan, decision 8).
   { id: 'case', title: 'Reserves case', dock: 'results', size: 520, side: 'tables' },
   { id: 'params', title: 'Parameters', dock: 'results', size: 400, side: 'tables' },
-  { id: 'canvas', title: 'Workflow canvas', dock: 'results', size: 400 },
-  { id: 'face', title: 'Face design', dock: 'results', size: 400 },
+  // A design editor, not a result: a document over the view (decision 0108).
+  { id: 'face', title: 'Face design', dock: 'document', size: 0 },
 ];
 
 /** The side a panel is on: Design unless the list says otherwise. */
