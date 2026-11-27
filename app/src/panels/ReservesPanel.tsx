@@ -15,15 +15,13 @@ import { useWorkspace } from '@/workspace/context';
  */
 
 type Mode = 'interrogate' | 'compare';
-type Scope = 'picked' | 'layer' | 'visible';
 
 const MODES: readonly Mode[] = ['interrogate', 'compare'];
 /** Each choice's name, and the line it puts at the panel's head, from the one tool list. */
-const { labels: MODE_LABELS, lines: MODE_LINES } = choiceWords('reserves', MODES);
-const SCOPES: readonly Scope[] = ['picked', 'layer', 'visible'];
+const { lines: MODE_LINES } = choiceWords('reserves', MODES);
 
 export function ReservesPanel() {
-  const { summary, selection, runRecord, clearRefusal, toolAsk, toolMode } = useWorkspace();
+  const { summary, selection, runRecord, clearRefusal, toolAsk, toolMode, worksOn: scope } = useWorkspace();
   const [mode, setMode] = useState<Mode>('interrogate');
   // A tool dropped on the workflow canvas asks for one of what this does (decision 0067).
   useEffect(() => {
@@ -34,7 +32,6 @@ export function ReservesPanel() {
     toolMode('reserves', mode);
     return () => toolMode('reserves', null);
   }, [toolMode, mode]);
-  const [scope, setScope] = useState<Scope>('picked');
   const [model, setModel] = useState<string | null>(null);
   const [seamAttribute, setSeamAttribute] = useState('seam');
   const [prefix, setPrefix] = useState('');
@@ -55,7 +52,7 @@ export function ReservesPanel() {
   const shown = new Set(layers.filter((l) => l.visible).map((l) => l.id));
   const visible = solids.filter((o) => shown.has(o.layer) && !concealed(o));
   const chosen = scope === 'picked' ? picked : scope === 'layer' ? onLayer : visible;
-  const scopeLabels: Record<Scope, string> = { picked: `Picked (${picked.length})`, layer: `Its layer (${onLayer.length})`, visible: `On show (${visible.length})` };
+  const scopeLabels: Record<typeof scope, string> = { picked: `Picked (${picked.length})`, layer: `Its layer (${onLayer.length})`, visible: `On show (${visible.length})` };
 
   const models = objects.filter((o) => o.kind === 'seam_model');
   const modelOf = models.find((o) => o.id === model) ?? models[models.length - 1] ?? null;
@@ -117,13 +114,11 @@ export function ReservesPanel() {
       result={report}
       action={action}
     >
-      <ToolSection>
-        <Choice value={mode} options={MODES} labels={MODE_LABELS} onChange={setMode} label="What to do" />
-      </ToolSection>
-
       <ToolSection title="Blocks">
         <Field label="Take" hint={chosen.length === 0 ? 'Pick a block in the view or the Objects table, or take those on show' : chosen.length === 1 ? chosen[0].name : `${chosen.length} blocks`}>
-          <Choice value={scope} options={SCOPES} labels={scopeLabels} onChange={setScope} label="Which blocks" />
+          <span data-slot="works-on-said" title="Set at the foot of the view, for every tool that takes solids">
+            {scopeLabels[scope]} <span className="text-muted-foreground">· at the foot of the view</span>
+          </span>
         </Field>
       </ToolSection>
 

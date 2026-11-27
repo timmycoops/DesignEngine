@@ -24,7 +24,9 @@ changes the map here first, in its own decision.
   Results, Schedule. In the middle, the item picked. On the right, the picked unit or row, and the 3D view only on
   demand.
 - **One home each:**
-  - What a tool works on (Picked, Its layer, On show, a filter): the foot of the view.
+  - What a tool works on (Picked, Its layer, On show): the foot of the view (`WorksOnBar`, `panels/worksOn.ts`); Cut
+    solids and Interrogate read it, and say what it takes where their own choice was. A new tool that takes solids
+    reads it too.
   - Running a case: Run in the top row.
   - Editing a settings table: Parameters. Elsewhere it's shown and links there.
   - A workflow: one document.
@@ -53,9 +55,10 @@ The shell is docks round the view (`docs/decisions/0076-docks-and-workflow-tabs.
 plan" tab): the layer tree on the left, a row a layer saying what's on it by kind and never a row an object, what isn't
 drawn (face designs, workflows, parameter tables, dataflows, reserves tables) found in its own tab's list with Rename and
 Delete there, an object hidden or shown from the view's right-click in Select, and found by name in the Objects table
-(`docs/decisions/0087-layers-only.md`); one tool dock on the right where every tool opens as a tab beside Properties,
-and one results dock under the view where every table opens as a tab (Run log, Tables, Reserves case, Parameters,
-Workflow canvas, Face design; the Dataflow and Setup tabs are gone into the Reserves case tab, 0105 workstream 7, and a
+(`docs/decisions/0087-layers-only.md`); on the right one tool slot, a tool at a time, over Properties (`dock: 'inspector'`;
+a tool asked for closes the one before it, and its tab is named for the tool, decision 0108),
+one results dock under the view where every table opens as a tab (Run log, Tables, Reserves case, Parameters;
+Face design and the workflow, its canvas beside its steps, open over the view as documents, `dock: 'document'`; the Dataflow and Setup tabs are gone into the Reserves case tab, 0105 workstream 7, and a
 saved layout's copy closes as it opens, `RETIRED`). The Reserves case tab (0105) edits settings through the same unsaved edits
 (`drafts`) as the Parameters tab, which lays another tab's edits on its grid (`withTable`); a tab that edits a parameter
 table goes through `setDraft`, never a store of its own. Its layout is 0106's: one header line (the cases as pills with +,

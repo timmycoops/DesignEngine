@@ -1,7 +1,7 @@
 import { Check } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import type { ObjectSummary } from '@/bridge';
-import { Choice, Field, NumberInput, resultParams, type RunReport, Select, type ToolAction, ToolPanel, ToolSection, useResultAs } from '@/design-system/kit';
+import { Choice, Field, NumberInput, resultParams, type RunReport, type ToolAction, ToolPanel, ToolSection, useResultAs } from '@/design-system/kit';
 import { choiceWords } from '@/tools';
 import { useWorkspace } from '@/workspace/context';
 import { countedWords, moveBetween } from './moveWords';
@@ -21,7 +21,7 @@ import { countedWords, moveBetween } from './moveWords';
 type Mode = 'move' | 'rotate' | 'mirror';
 
 const MODES: readonly Mode[] = ['move', 'rotate', 'mirror'];
-const { labels: MODE_LABELS, lines: MODE_LINES } = choiceWords('move', MODES);
+const { lines: MODE_LINES } = choiceWords('move', MODES);
 
 /** What moves whole: what's drawn. */
 const MOVES = new Set(['string', 'surface', 'solid', 'grid']);
@@ -136,17 +136,6 @@ export function MovePanel() {
 
   return (
     <ToolPanel title="Move and copy" panel="move" summary={MODE_LINES[mode]} result={report} action={action}>
-      <ToolSection>
-        <Field label="Tool">
-          <Select value={mode} aria-label="Move tool" onChange={(e) => setMode(e.target.value as Mode)}>
-            {MODES.map((m) => (
-              <option key={m} value={m}>
-                {MODE_LABELS[m]}
-              </option>
-            ))}
-          </Select>
-        </Field>
-      </ToolSection>
 
       <ToolSection title="Picked">
         <Field

@@ -298,7 +298,8 @@ export async function checkWorkflow(_viewport: Viewport, log: (line: string) => 
     showPanel(api, 'workflow');
     await wait(300);
     choose('Case', 'Base');
-    showPanel(api, 'canvas');
+    // The canvas is in the workflow's own document, beside its steps (decision 0108).
+    showPanel(api, 'workflow');
     await wait(1000);
     expect('the canvas lists the tools to add', labelled('Add Cut solids: By surface or RL') !== null);
     document.querySelector<HTMLElement>('.react-flow__node[data-id="step:1"]')?.click();

@@ -27,15 +27,13 @@ import { byStrip, facesLine } from './strips';
  */
 
 type Mode = 'strips' | 'seams' | 'benches' | 'polygons' | 'cut' | 'between';
-type Scope = 'picked' | 'layer' | 'visible';
 
 const MODES: readonly Mode[] = ['strips', 'seams', 'benches', 'polygons', 'cut', 'between'];
 /** Each choice's name, and the line it puts at the panel's head, from the one tool list. */
-const { labels: MODE_LABELS, lines: MODE_LINES } = choiceWords('cut', MODES);
-const SCOPES: readonly Scope[] = ['picked', 'layer', 'visible'];
+const { lines: MODE_LINES } = choiceWords('cut', MODES);
 
 export function CutPanel() {
-  const { summary, selected, selection, runRecord, clearRefusal, select, toolAsk, toolMode, setSelection, addingTo, panelsShown } = useWorkspace();
+  const { summary, selected, selection, runRecord, clearRefusal, select, toolAsk, toolMode, setSelection, addingTo, panelsShown, worksOn: scope } = useWorkspace();
   const [mode, setMode] = useState<Mode>('strips');
   // A tool dropped on the workflow canvas asks for one of what this does (decision 0067).
   useEffect(() => {
@@ -46,7 +44,6 @@ export function CutPanel() {
     toolMode('cut', mode);
     return () => toolMode('cut', null);
   }, [toolMode, mode]);
-  const [scope, setScope] = useState<Scope>('picked');
   const [by, setBy] = useState<StepTarget | null>(null);
   const [keep, setKeep] = useState<'below' | 'above' | 'both'>('both');
   const [facesLayer, setFacesLayer] = useState<string | null>(null);
@@ -80,7 +77,7 @@ export function CutPanel() {
   /** The solids a cut asked for, held while it asks for the rest (decision 0092): what's picked may change meanwhile. */
   const [held, setHeld] = useState<string[] | null>(null);
   const chosen = held ? solids.filter((o) => held.includes(o.id)) : scope === 'picked' ? picked : scope === 'layer' ? onLayer : visible;
-  const scopeLabels: Record<Scope, string> = { picked: `Picked (${picked.length})`, layer: `Its layer (${onLayer.length})`, visible: `On show (${visible.length})` };
+  const scopeLabels: Record<typeof scope, string> = { picked: `Picked (${picked.length})`, layer: `Its layer (${onLayer.length})`, visible: `On show (${visible.length})` };
 
   const surfaces = useMemo(() => objects.filter((o) => o.drawn && (o.kind === 'surface' || o.kind === 'grid')), [objects]);
 
@@ -414,7 +411,9 @@ export function CutPanel() {
   const solidsSection = (
     <ToolSection title="Solids">
       <Field label="Take" hint={chosen.length === 0 ? 'Pick a solid in the view or the Objects table, or take those on show' : chosen.length === 1 ? chosen[0].name : `${chosen.length} solids, each on its own`}>
-        <Choice value={scope} options={SCOPES} labels={scopeLabels} onChange={setScope} label="Which solids" />
+        <span data-slot="works-on-said" title="Set at the foot of the view, for every tool that takes solids">
+          {scopeLabels[scope]} <span className="text-muted-foreground">· at the foot of the view</span>
+        </span>
       </Field>
     </ToolSection>
   );
@@ -446,10 +445,6 @@ export function CutPanel() {
       result={report}
       action={askingAction}
     >
-      <ToolSection>
-        <Choice value={mode} options={MODES} labels={MODE_LABELS} onChange={setMode} label="What to do" columns={3} />
-      </ToolSection>
-
       <AskSteps steps={askSteps} at={asking.at} />
 
       {mode !== 'between' && solidsSection}

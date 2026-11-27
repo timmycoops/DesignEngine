@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, Eye, FileText, Filter, Layers, Pause, Play, Plus, SkipForward, SlidersHorizontal, Trash2, Workflow } from 'lucide-react';
+import { ArrowDown, ArrowUp, Eye, FileText, Filter, Layers, Pause, Play, Plus, SkipForward, SlidersHorizontal, Trash2 } from 'lucide-react';
 import { cn } from 'cn';
 import { InputFilter } from './InputFilter';
 import { useEffect, useMemo, useState } from 'react';
@@ -58,7 +58,7 @@ function reportOf(record: WorkflowRecord): RunReport {
 }
 
 export function WorkflowPanel() {
-  const { summary, log, runWorkflow, runAllCases, addingTo, setAddingTo, setSelection, zoomTo, setLayersVisible, openPanel } = useWorkspace();
+  const { summary, log, runWorkflow, runAllCases, addingTo, setAddingTo, setSelection, zoomTo, setLayersVisible } = useWorkspace();
   const { workflows, chosen, workflow, revision, caseName, pick, pickCase, save: saveWorkflow } = usePickedWorkflow();
   const [newCase, setNewCase] = useState('');
   const [tidy, setTidy] = useState(readTidy);
@@ -280,13 +280,6 @@ export function WorkflowPanel() {
     >
       <ToolSection
         title="Saved"
-        aside={
-          chosen ? (
-            <Button variant="outline" size="sm" className="h-6 px-2 text-xs" title="The workflow as nodes and wires: what each step reads, and wiring an input by drawing" onClick={() => openPanel('canvas')}>
-              <Workflow className="size-3.5" /> Canvas
-            </Button>
-          ) : undefined
-        }
       >
         {workflows.length === 0 ? (
           <div className="text-muted-foreground">No workflow yet: tick runs in the Run log and Capture them, the quickest way to start.</div>

@@ -114,6 +114,32 @@ hierarchies; floating windows; engine changes outside workstream 5.
 
 The shell check's stale menu list (no "A table (CSV)…", "Dataflow" for the Reserves case) is put right with it.
 
+## Built: workstream 3, the Design side
+
+- **One tool slot** (`dock: 'tools'`, `inSlot` in `Workspace.tsx`): a tool asked for closes the one before it, and opens
+  over Properties, which has a group of its own under it (`dock: 'inspector'`). The slot's tab is named for the tool
+  in it (By seams, Offset), not the panel that holds it. A layout saved before is put right as it opens: the tool in
+  front kept, the others closed, Properties under it.
+- **No tool list inside a tool**: the Tool lists of Strings, Strings from surfaces, Surfaces and Move and copy, and the
+  What to do choices of Cut solids and Reserves, are gone. The ribbon picks the tool; the panel's head says what it
+  does.
+- **What a tool works on**, at the foot of the view (`WorksOnBar`, `panels/worksOn.ts`): Picked, Its layer or On show,
+  with how many solids each takes, shown while Cut solids or Interrogate is in front. Both read it and say what it
+  takes where their own choice was.
+- **Documents over the view** (`dock: 'document'`): Face design, and the workflow, which is now one document: its canvas
+  with the workflow, its cases, its steps, its report and its run beside it (`WorkflowDocument`). The Workflow canvas
+  panel and its tool are gone (a saved layout's canvas tab closes as it opens), and so are the pickers the two had each.
+  Closing a document puts the view back.
+- **The Objects table and the Run log under the view** came with workstream 2; Interrogate is on Geology since then.
+
+| Check | Result |
+|---|---|
+| `pnpm test` | 198 pass, 4 new (`tests/worksOn.test.mjs`): what Picked, Its layer and On show each take, with their counts, and the tools that read it |
+| `--shell`, release build from this branch, 16 Nov demo | 61 of 61: a tool in the slot over Properties, named for the tool; one tool at a time; Face design and the workflow over the view; a minimised slot back with the tool asked for; the string tools picked from the row; Cut solids with no choice of its own and the bar at the foot of the view; every panel's first control or line within 40 px of its tab |
+| `--workflow` | 38 of 38 |
+| `--select` | 40 of 40 |
+| `--case` | 51 of 53, as on main (the demo's own two) |
+
 ## Known limits
 
 - **The section's labels and the overview** keep their dark plate with white words in both looks, so they read over
@@ -129,3 +155,8 @@ The shell check's stale menu list (no "A table (CSV)…", "Dataflow" for the Res
 - **The app benches need `bench/out` to exist**: in a fresh worktree a bench ran to its end and then waited, never
   writing its results. Each bench run here used its own WebView2 folder (`WEBVIEW2_USER_DATA_FOLDER`), as one that
   waited held the usual one.
+- **The string tools still work on what's picked**: Its layer and On show are for the tools that take solids. A string
+  tool that reads the bar is for a plan of its own, as the commands would take more than they do today.
+- **The workflow's canvas is narrow** at 1,600 px with the tool list beside it open: close the list (its button at the
+  top) for the room.
+- **A tool's typed settings go with it** when another takes the slot: the next time it opens, it starts as it does.

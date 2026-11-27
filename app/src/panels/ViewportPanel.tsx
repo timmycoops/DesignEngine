@@ -11,6 +11,7 @@ import { valueBands } from '@/viewport/bands';
 import { useWorkspace } from '@/workspace/context';
 import { fmt } from './format';
 import { ViewBar } from './ViewBar';
+import { WorksOnBar } from './WorksOnBar';
 import { ViewMenu } from './ViewMenu';
 
 function Swatch({ colour, label }: { colour: string; label: string }) {
@@ -300,6 +301,7 @@ export function ViewportPanel() {
     <div className="view-panel relative h-full w-full overflow-hidden bg-[var(--view-background)]">
       <div ref={ref} className="absolute inset-0" />
       <ViewBar />
+      <WorksOnBar />
       <Legends />
       <TypedEntry />
       <ViewMenu />
