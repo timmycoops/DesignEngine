@@ -133,9 +133,16 @@ export async function checkShell(
     resetLayout(api);
     await settle();
     const goStage = async (id: string) => {
+      if (!document.querySelector(`[role="tab"][data-stage="${id}"]`)) await goSide('design');
       document.querySelector<HTMLButtonElement>(`[role="tab"][data-stage="${id}"]`)?.click();
       await settle();
     };
+    /** Design or Tables, by the switch on the ribbon (decision 0108). */
+    const goSide = async (side: 'design' | 'tables') => {
+      document.querySelector<HTMLButtonElement>(`[data-slot="side-switch"] [data-side="${side}"]`)?.click();
+      await settle();
+    };
+    const sideNow = () => document.querySelector<HTMLElement>('[data-slot="side-switch"] [aria-checked="true"]')?.dataset.side ?? '';
     const openMenu = async (button: HTMLElement | null | undefined) => {
       button?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerType: 'mouse', ctrlKey: false }));
       await settle();
@@ -161,15 +168,17 @@ export async function checkShell(
       Cut: ['solids', 'cut:strips'],
       Builder: ['walls', 'builder'],
       Face: ['walls', 'face'],
-      Reserves: ['reserves', 'reserves'],
+      Reserves: ['geology', 'reserves:interrogate'],
       Blocks: ['solids', 'restable:objects'],
-      'Reserves table': ['reserves', 'restable'],
-      Parameters: ['reserves', 'params'],
+      'Reserves table': ['tables', 'restable'],
+      Parameters: ['tables', 'params'],
       Workflow: ['', 'workflow'],
     };
     const tool = async (name: string) => {
       const [stage, key] = AT[name];
-      if (stage) await goStage(stage);
+      if (stage === 'tables') await goSide('tables');
+      else if (stage) await goStage(stage);
+      else await goSide('design');
       await clickTool(key);
     };
     const tabs = (id: PanelId) => api.getPanel(id)?.group.panels.map((p) => p.id) ?? [];
@@ -206,8 +215,13 @@ export async function checkShell(
     showPanel(api, 'canvas');
     await settle();
     const tables = size();
-    expect('the tables and Face design are tabs in one row under the view', tabs('runlog').length === 5 && ['restable', 'params', 'face', 'canvas'].every((id) => tabs('runlog').includes(id as PanelId)) && tables.width === open.width, {
-      tabs: tabs('runlog'),
+    const tablesSide = tabs('params');
+    const tablesHidden = !(api.getPanel('params')?.group.api.isVisible ?? true);
+    expect("Design's tables (Run log, Face design, the canvas) are tabs in one row under the view; the Tables side's are in a group of their own, hidden on Design", tabs('runlog').length === 3 && ['face', 'canvas'].every((id) => tabs('runlog').includes(id as PanelId)) && tablesSide.includes('restable') && tablesSide.includes('params') && !tablesSide.includes('runlog') && tablesHidden && sideNow() === 'design' && tables.width === open.width, {
+      design: tabs('runlog'),
+      tables_side: tablesSide,
+      tables_hidden: tablesHidden,
+      side: sideNow(),
       view: tables,
     });
     expect('the results dock grows to the height a table asks for, and no further', blocksHeight === 400 && (api.getPanel('runlog')?.group.api.height ?? 0) === 400, { with_tables: blocksHeight, with_them_all: api.getPanel('runlog')?.group.api.height });
@@ -237,7 +251,7 @@ export async function checkShell(
     await key('`');
     const viewOnly = size();
     await key('`');
-    expect('` with a table filling the window gives the window to the view, and ` again brings everything back', viewOnly.width >= window.innerWidth - 8 && Math.abs(size().width - tables.width) <= 10 && tabs('runlog').length === 5, { view_only: viewOnly, back: size() });
+    expect('` with a table filling the window gives the window to the view, and ` again brings everything back', viewOnly.width >= window.innerWidth - 8 && Math.abs(size().width - tables.width) <= 10 && tabs('runlog').length === 3, { view_only: viewOnly, back: size() });
 
     // A dock with nothing left in it goes, and the view takes its room; opened again, the view gives it back.
     const layers = width('layers');
@@ -331,17 +345,8 @@ export async function checkShell(
       remembered: kept.filter(([path]) => path === ''),
     });
 
-    // The project's name is no menu: a click opens the Project tab, whose row holds New, Open, Save as, Import and Export.
+    // The project menu (☰, decision 0108): New, Open, Save as, Import, Export, Licence and View controls.
     await goStage('solids');
-    document.querySelector<HTMLElement>('[data-slot="project-name"]')?.click();
-    for (let k = 0; k < 20 && document.querySelector('[role="tab"][aria-selected="true"]')?.getAttribute('data-stage') !== 'project'; k++) await wait(50);
-    expect(
-      "the project's name opens the Project tab, and is no menu of its own",
-      document.querySelector('[role="tab"][aria-selected="true"]')?.getAttribute('data-stage') === 'project' && !document.querySelector('[data-slot="project-menu"]'),
-    );
-
-    // The menus: Open, Import and Export on the Project row, Panels at the row's end.
-    await goStage('project');
     const menuOf = async (button: HTMLElement | null | undefined) => {
       await openMenu(button);
       const found = menuItems();
@@ -349,14 +354,32 @@ export async function checkShell(
       return found;
     };
     const rowMenu = (name: string) => document.querySelector<HTMLElement>(`[data-row-menu="${name}"]`);
-    const projectMenu = await menuOf(rowMenu('Open'));
-    const importMenu = await menuOf(rowMenu('Import'));
-    const exportMenu = await menuOf(rowMenu('Export'));
+    const projectButton = () => document.querySelector<HTMLElement>('[data-slot="project-menu"]');
+    await openMenu(projectButton());
+    const projectTop = [...(document.querySelector('[role="menu"]')?.querySelectorAll<HTMLElement>(':scope > [role="menuitem"]') ?? [])].map((m) => m.textContent?.trim() ?? '');
+    await closeMenu();
+    /** A menu within the project menu: opened by a click on its name, its items read from the menu that opens. */
+    const withinProject = async (name: string) => {
+      await openMenu(projectButton());
+      rowMenu(name)?.click();
+      await settle();
+      const menus = [...document.querySelectorAll<HTMLElement>('[role="menu"]')];
+      const found = [...(menus.at(-1)?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])].map((m) => ({ words: m.textContent?.trim() ?? '', off: m.hasAttribute('data-disabled'), tool: m.dataset.tool ?? '' }));
+      await closeMenu();
+      await closeMenu();
+      return menus.length > 1 ? found : [];
+    };
+    expect("the project's name is a label; the project menu holds New, Open, Save as, Import, Export, Licence and View controls", projectTop.join('|') === 'New|Open|Save as|Import|Export|Licence|View controls' && document.querySelector('[data-slot="project-name"]')?.tagName === 'SPAN' && !document.querySelector('[role="tab"][data-stage="project"]'), {
+      menu: projectTop,
+    });
+    const projectMenu = await withinProject('Open');
+    const importMenu = await withinProject('Import');
+    const exportMenu = await withinProject('Export');
     const panelsMenu = await menuOf(document.querySelector<HTMLElement>('[data-slot="panels-menu"]'));
     const projectWas = ['A project (.zdp)…', 'An older project folder (.zdproj)…'];
-    const importWas = ['Surfaces…', 'Vulcan grid…', 'Strings…', 'Solids', 'Deswik drawing (.dcf)…', 'Spry project (.spry)…', 'Suggest a stack definition (CSV)…', 'Build and check from a definition…', 'Relink geology…'];
+    const importWas = ['Surfaces…', 'Vulcan grid…', 'Strings…', 'Solids', 'Deswik drawing (.dcf)…', 'Spry project (.spry)…', 'A table (CSV)…', 'Suggest a stack definition (CSV)…', 'Build and check from a definition…', 'Relink geology…'];
     const exportWas = ['Selected to DXF…', 'Selected strings to CSV…', 'Selected solids to a zip…', 'Everything visible to DXF…', 'Visible strings to CSV…', 'Visible solids to a zip…'];
-    const panelsWas = ['Layers', 'Properties', 'Strings', 'Strings from surfaces', 'Surfaces', 'Move and copy', 'Builder', 'Cut solids', 'Reserves', 'Workflow', 'Licence', 'View controls', 'Run log', 'Tables', 'Dataflow', 'Parameters', 'Workflow canvas', 'Face design', 'Hide every panel, or bring them back`', 'Reset layout'];
+    const panelsWas = ['Layers', 'Properties', 'Strings', 'Strings from surfaces', 'Surfaces', 'Move and copy', 'Builder', 'Cut solids', 'Reserves', 'Workflow', 'Licence', 'View controls', 'Run log', 'Tables', 'Reserves case', 'Parameters', 'Workflow canvas', 'Face design', 'Hide every panel, or bring them back`', 'Reset layout'];
     const reads = (menu: { words: string }[], was: string[]) => menu.map((m) => m.words).join('|') === was.join('|');
     expect('the Open, Import, Export and Panels menus read as they should, what needs a selection off without one', reads(projectMenu, projectWas) && reads(importMenu, importWas) && reads(exportMenu, exportWas) && reads(panelsMenu, panelsWas) && exportMenu.map((m) => m.off).join() === 'true,true,true,false,false,false', {
       project: projectMenu.map((m) => m.words),
@@ -365,8 +388,21 @@ export async function checkShell(
       panels: panelsMenu.length,
     });
     await goStage('solids');
-    const solidsIn = await menuOf(rowMenu('Import solids'));
-    const solidsOut = await menuOf(rowMenu('Export solids'));
+    /** A menu on the row, or within More where the row folded it. */
+    const rowOrMore = async (name: string) => {
+      const onRow = rowMenu(name);
+      if (onRow) return menuOf(onRow);
+      await openMenu(moreButton());
+      [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((m) => m.textContent?.trim() === name)?.click();
+      await settle();
+      const menus = [...document.querySelectorAll<HTMLElement>('[role="menu"]')];
+      const found = menus.length > 1 ? [...(menus.at(-1)?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])].map((m) => ({ words: m.textContent?.trim() ?? '', off: m.hasAttribute('data-disabled'), tool: m.dataset.tool ?? '' })) : [];
+      await closeMenu();
+      await closeMenu();
+      return found;
+    };
+    const solidsIn = await rowOrMore('Import solids');
+    const solidsOut = await rowOrMore('Export solids');
     expect("the Solids row's own menus hold the solids' imports and exports", reads(solidsIn, ['A zip or files…', 'A folder…', 'A zip or files…', 'A folder…']) && reads(solidsOut, ['Selected solids to a zip…', 'Visible solids to a zip…']) && solidsOut[0]?.off === true, {
       import: solidsIn.map((m) => m.words),
       export: solidsOut.map((m) => m.words),
@@ -396,7 +432,7 @@ export async function checkShell(
     // Find a command (workstream 6): Ctrl+K from anywhere, type, Enter.
     resetLayout(api);
     await settle();
-    await goStage('project');
+    await goStage('strings');
     const palette = () => document.querySelector<HTMLElement>('[cmdk-root]');
     const findInput = () => document.querySelector<HTMLInputElement>('[cmdk-input]');
     const found = () => [...document.querySelectorAll<HTMLElement>('[cmdk-item]')].map((i) => ({ tool: i.dataset.tool ?? '', off: i.getAttribute('aria-disabled') === 'true', picked: i.getAttribute('aria-selected') === 'true' }));
@@ -439,13 +475,13 @@ export async function checkShell(
     const forSeams = found();
     await enter();
     const afterSeams = { open: palette() !== null, lit: litNow(), front: front('cut'), stage: stageNow() };
-    expect('typing part of a name and Enter carries the tool out, from another stage, which stays', forSeams.find((f) => f.picked)?.tool === 'cut:seams' && !afterSeams.open && afterSeams.front === 'cut' && afterSeams.stage === 'project', {
+    expect('typing part of a name and Enter carries the tool out, from another stage, which stays', forSeams.find((f) => f.picked)?.tool === 'cut:seams' && !afterSeams.open && afterSeams.front === 'cut' && afterSeams.stage === 'strings', {
       found: forSeams.map((f) => f.tool),
       after: afterSeams,
     });
     await goStage('solids');
     const litOnItsRow = litNow();
-    await goStage('project');
+    await goStage('strings');
 
     await ctrlK();
     await typeFind('polygons');
@@ -965,6 +1001,7 @@ export async function checkShell(
     for (const id of everyPanel) showPanel(api, id);
     await settle();
     const toFront = async (id: PanelId) => {
+      showPanel(api, id);
       api.getPanel(id)?.api.setActive();
       await settle();
     };
@@ -1059,10 +1096,11 @@ export async function checkShell(
         viewport.fitView();
       }
       const saved: string[] = [];
-      const picture = async (name: string, stage: StageId, panels: PanelId[], tools: string[] = []) => {
+      const picture = async (name: string, stage: StageId | 'tables', panels: PanelId[], tools: string[] = []) => {
         resetLayout(api);
         await settle();
-        await goStage(stage);
+        if (stage === 'tables') await goSide('tables');
+        else await goStage(stage);
         for (const id of panels) showPanel(api, id);
         for (const key of tools) await clickTool(key);
         await wait(1200);
@@ -1070,10 +1108,12 @@ export async function checkShell(
         log(`shell: ${path}`);
         saved.push(path);
       };
-      await picture('docks-default', 'project', []);
+      await picture('docks-default', 'strings', []);
       await picture('docks-solids', 'solids', ['builder', 'reserves'], ['cut:seams', 'restable:objects']);
       await picture('docks-walls', 'walls', ['cut'], ['builder', 'face']);
-      await picture('docks-reserves', 'reserves', ['cut', 'params'], ['reserves', 'restable']);
+      await picture('docks-reserves', 'geology', ['cut'], ['reserves:interrogate']);
+      await picture('tables-case', 'tables', [], ['case']);
+      await picture('tables-parameters', 'tables', [], ['params']);
       await picture('ribbon-strings', 'strings', [], ['strings:offset']);
       await picture('ribbon-geology', 'geology', []);
       // Find a command, open on what "seam" finds.

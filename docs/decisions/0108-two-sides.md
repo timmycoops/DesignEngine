@@ -86,6 +86,34 @@ hierarchies; floating windows; engine changes outside workstream 5.
   snap mark at 2.5:1 or more (WCAG contrast); a change of look carries to the view and to whoever listens, and back.
   `pnpm test` passes 193; `pnpm typecheck` is clean.
 
+## Built: workstream 2, the two sides
+
+- **The Design or Tables switch** on the ribbon's top row (`SideSwitch` in `Ribbon.tsx`), remembered a project on this
+  machine like the group (`sideOf`, `rememberSide` in `workspace/stage.ts`, `zd.side.v1`).
+- **Each side its own layout** (`showSide` in `Workspace.tsx`). The Tables side's panels (Reserves case, Parameters, and
+  the Tables panel while on Tables) are a group of their own, which fills the window on Tables and is hidden on Design;
+  Design's docks round the view stay as they were left, their sizes held across a switch. A layout saved before the
+  two sides has its Tables panels gathered into their group the first time it opens. ` on Tables shows the view in the
+  window and brings the tables back; Reset layout goes back to Design.
+- **A panel names its side** (`side` in `PANELS`: `tables`, `both`, Design by default). Asking for one on the other side,
+  from a row, Find a command or another panel, switches side. The Tables panel (`both`) moves to the side that asks:
+  the Objects table under the view on Design, reserves tables on Tables.
+- **Five Design groups** (Strings · Walls · Surfaces · Solids · Geology), each tool on one row (`ROWS`): Set grade,
+  Offset and Project only on Strings, the surface tools on their own Surfaces row, Interrogate and Compare blocks on
+  Geology. Move, Rotate, Mirror and Delete (`EDIT_ROW`) are at the end of every Design row. The Tables side has one row
+  (Reserves case, Tables, Parameters) until its list comes in workstream 4.
+- **The project menu** (☰, `PROJECT_MENU`): New, Open (a project or an older folder), Save as, Import, Export, Licence
+  and View controls. The Project and Reserves stages are gone; the project's name is a label with its path in its tip.
+- **Find a command** lists Project, the five groups, Tables and Always there.
+
+| Check | Result |
+|---|---|
+| `pnpm test` | 194 pass: each tool on one row, the rows' names, the project menu, a panel's side and its tool's agree, the group and the side remembered (a stage there no longer is opens on Strings) |
+| `--shell` on the release build from this branch, the 16 Nov demo | 61 of 61: the docks as before, Design's tables under the view and the Tables side's in their own group hidden on Design, the project menu and its Open, Import and Export, the Solids row's menus found in More where the row folds them, Find from a group that stays, every panel's first control within 40 px with each panel shown on its side |
+| `--case` on the same | 51 of 53, as on main: the two left are the demo's (a "Check haulage" dataflow and a second "Reserves assumptions" already in the 16 Nov demo, saved by an earlier run) |
+
+The shell check's stale menu list (no "A table (CSV)…", "Dataflow" for the Reserves case) is put right with it.
+
 ## Known limits
 
 - **The section's labels and the overview** keep their dark plate with white words in both looks, so they read over
@@ -95,3 +123,9 @@ hierarchies; floating windows; engine changes outside workstream 5.
 - **What's picked is a deep amber on light** (`0xc28400`), the gold made darker so a 1 px line reads on the pale
   ground (2.7:1). It's still the picked colour; the panels' gold matches it.
 - **A section cut before the change** keeps its line colours until it's cut again.
+- **The Tables side has a row, not yet its list** (workstream 4), and Compare blocks stays on Geology with the Reserves
+  panel until results have their own place.
+- **On a narrow window the Design rows fold sooner**: Move, Rotate, Mirror and Delete take room at each row's end.
+- **The app benches need `bench/out` to exist**: in a fresh worktree a bench ran to its end and then waited, never
+  writing its results. Each bench run here used its own WebView2 folder (`WEBVIEW2_USER_DATA_FOLDER`), as one that
+  waited held the usual one.

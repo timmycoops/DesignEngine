@@ -78,7 +78,8 @@ import { inUse, type Tool, type ToolAction, type ToolNeeds } from './tools';
 import { listenForChords } from './workspace/chords';
 import { FindCommand } from './workspace/FindCommand';
 import { Ribbon, type StageId } from './workspace/Ribbon';
-import { rememberStage, stageOf } from './workspace/stage';
+import { rememberSide, rememberStage, sideOf, stageOf } from './workspace/stage';
+import type { Side } from './tools';
 import type { ToolUse } from './workspace/ToolMenu';
 import { onLook } from './viewport/look';
 
@@ -536,6 +537,13 @@ export default function App() {
   const setStage = useCallback((next: StageId) => {
     setStageState(next);
     rememberStage(summaryRef.current?.path ?? null, next);
+  }, []);
+  // The side of the app in front, Design or Tables (decision 0108), remembered for each project the same way. A panel
+  // of the other side asked for switches it too (the workspace says so through `onSide`).
+  const [side, setSideState] = useState<Side>(() => sideOf(null));
+  const setSide = useCallback((next: Side) => {
+    setSideState(next);
+    rememberSide(summaryRef.current?.path ?? null, next);
   }, []);
 
   const addStep = useCallback(
@@ -1396,7 +1404,10 @@ export default function App() {
   };
 
   const projectPath = summary?.path ?? null;
-  useEffect(() => setStageState(stageOf(projectPath)), [projectPath]);
+  useEffect(() => {
+    setStageState(stageOf(projectPath));
+    setSideState(sideOf(projectPath));
+  }, [projectPath]);
 
   const projectName = summary?.path ? splitPath(summary.path)[1] : 'Untitled project';
   /** A file name for what's selected: its name if it's one, else the project's. */
@@ -1476,14 +1487,14 @@ export default function App() {
   return (
     <TooltipProvider delayDuration={400}>
       <div className="flex h-full flex-col">
-        <Ribbon projectName={projectName} projectPath={summary?.path ?? null} stage={stage} onStage={setStage} onFind={() => setFinding(true)} use={toolUse} />
+        <Ribbon projectName={projectName} projectPath={summary?.path ?? null} side={side} onSide={setSide} stage={stage} onStage={setStage} onFind={() => setFinding(true)} use={toolUse} />
         <FindCommand open={finding} onOpenChange={setFinding} use={toolUse} />
 
         <main className="min-h-0 flex-1">
           <WorkspaceContext.Provider value={workspace}>
             <ViewToolsContext.Provider value={viewTools}>
               <ShowNote.Provider value={showNote}>
-                <Workspace onReady={(api) => (dockRef.current = api)} onShown={setPanelsShown} />
+                <Workspace side={side} onSide={setSide} onReady={(api) => (dockRef.current = api)} onShown={setPanelsShown} />
               </ShowNote.Provider>
             </ViewToolsContext.Provider>
           </WorkspaceContext.Provider>

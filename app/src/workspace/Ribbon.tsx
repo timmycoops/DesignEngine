@@ -4,13 +4,13 @@ import { cn } from 'cn';
 import { Button } from '@/design-system/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from '@/design-system/ui/dropdown-menu';
 import { Separator } from '@/design-system/ui/separator';
-import { ALWAYS_ROW, panelTool, type RowItem, type RowMenu, ROWS, rowName, type Stage, STAGES, toolByKey } from '@/tools';
+import { ALWAYS_ROW, EDIT_ROW, type Group, panelTool, PROJECT_MENU, type RowItem, type RowMenu, ROWS, rowName, type Side, STAGES, toolByKey } from '@/tools';
 import { PANELS } from './panels';
 import { BarTool, RowMenuItems, RowToolItem, type ToolUse } from './ToolMenu';
 import { IconNamed } from './toolIcons';
 import { toolShortcut } from '@/viewport/viewControls';
 
-export type StageId = Exclude<Stage, 'always'>;
+export type StageId = Group;
 
 /** The room More takes at the end of a row that doesn't fit (CSS px): its button and the gap before it. */
 const MORE_ROOM = 76;
@@ -160,51 +160,130 @@ function ToolRow({ items, use }: { items: readonly RowItem[]; use: ToolUse }) {
 }
 
 /**
- * The ribbon (decision 0076): a tab a stage, in the order the work is done, and under it the row of that stage's
- * tools, named in words. The project's name (a click opens the Project tab, no menu of its own: Tim, 17 November), Save,
- * Undo and Redo sit before the tabs and Find a command after them;
- * Workflow and the Panels menu at the end of the row. Switching stage changes the row only: the panels stay where they were left.
+ * The project menu (☰, decision 0108): New, Open, Save as, Import, Export, Licence and View controls, drawn from the
+ * tool list's `PROJECT_MENU`, Open, Import and Export as menus within it.
  */
-export function Ribbon({ projectName, projectPath, stage, onStage, onFind, use }: { projectName: string; projectPath: string | null; stage: StageId; onStage: (stage: StageId) => void; onFind: () => void; use: ToolUse }) {
+function ProjectMenu({ use }: { use: ToolUse }) {
   return (
-    <header data-slot="ribbon" className="shrink-0 border-b bg-card">
-      <div data-slot="tab-row" className="flex h-[31px] items-center gap-0.5 px-2">
-        {/* The project's name, no menu of its own: its commands are the Project row's, which a click opens. */}
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-6 max-w-60 font-semibold"
-          title={`${projectPath ?? 'Not saved yet'}: New, Open, Save as, Import and Export are on the Project tab`}
-          data-slot="project-name"
-          onClick={() => onStage('project')}
-        >
-          <span className="truncate">{projectName}</span>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="sm" className="h-6 px-1.5" title="The project: New, Open, Save as, Import, Export, Licence and View controls" data-slot="project-menu" aria-label="Project menu">
+          <IconNamed name="menu" />
         </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start">
+        {PROJECT_MENU.map((item, k) => {
+          if (item === '|') return <DropdownMenuSeparator key={k} />;
+          if (typeof item !== 'string') {
+            return (
+              <DropdownMenuSub key={item.label}>
+                <DropdownMenuSubTrigger title={item.tip} data-row-menu={item.label}>
+                  <IconNamed name={item.icon} /> {item.label}
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent>
+                  <RowMenuItems menu={item} use={use} />
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+            );
+          }
+          const tool = toolByKey(item);
+          return tool ? <RowToolItem key={item} tool={tool} use={use} /> : null;
+        })}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/** Design or Tables (decision 0108): which side of the app is in front, each with its own layout. */
+function SideSwitch({ side, onSide }: { side: Side; onSide: (side: Side) => void }) {
+  const sides: { id: Side; title: string; tip: string }[] = [
+    { id: 'design', title: 'Design', tip: 'Design: strings, walls, surfaces, solids and geology, in the view' },
+    { id: 'tables', title: 'Tables', tip: 'Tables: inputs, cases, dataflows, parameters and results, on to the schedule' },
+  ];
+  return (
+    <div role="radiogroup" aria-label="Side of the app" data-slot="side-switch" className="ml-3 flex h-6 items-center rounded-md border border-input p-0.5">
+      {sides.map((s) => (
+        <button
+          key={s.id}
+          type="button"
+          role="radio"
+          aria-checked={s.id === side}
+          data-side={s.id}
+          title={s.tip}
+          className={cn(
+            'h-full rounded-[5px] px-3 text-[0.8rem] font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring',
+            s.id === side ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground',
+          )}
+          onClick={() => onSide(s.id)}
+        >
+          {s.title}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The ribbon (decisions 0076, 0108). Along the top: the project menu, the project's name, Save, Undo and Redo, the
+ * Design or Tables switch, on Design a tab for each group of tools, and Find a command. Under it on Design, the group's
+ * row of tools named in words, with Move, Rotate, Mirror and Delete, Workflow and the Panels menu at its end; on Tables,
+ * the Tables side's row until it has its list. Switching group changes the row only; switching side changes the layout.
+ */
+export function Ribbon({
+  projectName,
+  projectPath,
+  side,
+  onSide,
+  stage,
+  onStage,
+  onFind,
+  use,
+}: {
+  projectName: string;
+  projectPath: string | null;
+  side: Side;
+  onSide: (side: Side) => void;
+  stage: StageId;
+  onStage: (stage: StageId) => void;
+  onFind: () => void;
+  use: ToolUse;
+}) {
+  const design = side === 'design';
+  return (
+    <header data-slot="ribbon" data-side={side} className="shrink-0 border-b bg-card">
+      <div data-slot="tab-row" className="flex h-[31px] items-center gap-0.5 px-2">
+        <ProjectMenu use={use} />
+        <span className="max-w-60 truncate px-1.5 text-[0.8rem] font-semibold" title={projectPath ?? 'Not saved yet'} data-slot="project-name">
+          {projectName}
+        </span>
         {['project.save', 'edit.undo', 'edit.redo'].map((key) => (
           <BarTool key={key} tool={toolByKey(key)!} use={use} />
         ))}
-        <div role="tablist" aria-label="Stages of the work" className="ml-3 flex h-full items-stretch">
-          {STAGES.map((s) => (
-            <button
-              key={s.id}
-              type="button"
-              role="tab"
-              aria-selected={s.id === stage}
-              data-stage={s.id}
-              className={cn(
-                'px-3 text-[0.8rem] transition-colors outline-none focus-visible:bg-muted/50',
-                s.id === stage ? 'bg-background font-medium text-foreground shadow-[inset_0_2px_0_var(--primary)]' : 'text-muted-foreground hover:text-foreground',
-              )}
-              onClick={() => onStage(s.id)}
-            >
-              {s.title}
-            </button>
-          ))}
-        </div>
+        <SideSwitch side={side} onSide={onSide} />
+        {design && (
+          <div role="tablist" aria-label="Groups of design tools" className="ml-2 flex h-full items-stretch">
+            {STAGES.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                role="tab"
+                aria-selected={s.id === stage}
+                data-stage={s.id}
+                className={cn(
+                  'px-3 text-[0.8rem] transition-colors outline-none focus-visible:bg-muted/50',
+                  s.id === stage ? 'bg-background font-medium text-foreground shadow-[inset_0_2px_0_var(--primary)]' : 'text-muted-foreground hover:text-foreground',
+                )}
+                onClick={() => onStage(s.id)}
+              >
+                {s.title}
+              </button>
+            ))}
+          </div>
+        )}
         <button
           type="button"
           data-slot="find-button"
-          title="Find a command (Ctrl+K): any tool, from any stage, by typing part of its name"
+          title="Find a command (Ctrl+K): any tool, on either side, by typing part of its name"
           className="ml-auto flex h-6 w-60 min-w-0 shrink items-center gap-2 overflow-hidden rounded-md border border-input bg-background px-2 text-xs whitespace-nowrap text-muted-foreground hover:text-foreground"
           onClick={onFind}
         >
@@ -214,11 +293,19 @@ export function Ribbon({ projectName, projectPath, stage, onStage, onFind, use }
         </button>
       </div>
       <div data-slot="tool-row" className="flex h-9 items-center gap-0.5 border-t bg-background px-2">
-        <ToolRow key={stage} items={ROWS[stage]} use={use} />
+        <ToolRow key={design ? stage : 'tables'} items={design ? ROWS[stage] : ROWS.tables} use={use} />
         <div className="ml-2 flex shrink-0 items-center gap-0.5">
-          {ALWAYS_ROW.map((key) => (
-            <BarTool key={key} tool={toolByKey(key)!} use={use} named />
-          ))}
+          {design && (
+            <div data-slot="edit-row" className="mr-1 flex items-center gap-0.5 border-l pl-2">
+              {EDIT_ROW.map((key) => (
+                <BarTool key={key} tool={toolByKey(key)!} use={use} named />
+              ))}
+            </div>
+          )}
+          {design &&
+            ALWAYS_ROW.map((key) => (
+              <BarTool key={key} tool={toolByKey(key)!} use={use} named />
+            ))}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="sm" className="px-2" data-slot="panels-menu">
