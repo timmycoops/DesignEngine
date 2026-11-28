@@ -101,3 +101,18 @@ test('what the window shows is told to the Tables side, so a pick goes to the vi
   assert.equal(showingNow(), 'tables');
   setShowing('design');
 });
+
+test('the view is beside the Tables side with both shown or with it popped out, so the case picks in the view then (0109)', async () => {
+  const { setPopped, viewBeside } = await import('../src/workspace/tablesSide.ts');
+  resetItems();
+  assert.equal(viewBeside(), false, 'on Design the case is away');
+  setShowing('tables');
+  assert.equal(viewBeside(), false, 'on Tables the view is away');
+  setShowing('both');
+  assert.equal(viewBeside(), true);
+  setShowing('design');
+  setPopped(true);
+  assert.equal(viewBeside(), true, 'popped out: the main window on Design shows the view, the case in its own window');
+  resetItems();
+  assert.equal(viewBeside(), false);
+});

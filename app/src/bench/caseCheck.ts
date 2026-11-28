@@ -157,6 +157,32 @@ export async function checkCase(path: string, log: (line: string) => void, show:
   document.querySelector<HTMLElement>('[data-slot="map-block"][data-block="Pit 3 B5"]')?.click();
   await until(() => (document.querySelector('[data-slot="units-table"]')?.textContent ?? '').includes('Pit / 3 / B5 before and after rom_loss'), 20_000);
 
+  // Popped out (decision 0109): the view is in the main window beside it, so a block picked on the map in the Tables
+  // side's own window is picked in the view too. The view still holds B3's solids from Both, so B3 is picked there
+  // first, then B5, and what Properties shows is read before and after, as the two blocks may hold as many solids.
+  const tablesPage = () => api.getPanel('tables')?.group.element.ownerDocument ?? null;
+  const popButton = () => [...(tablesPage()?.querySelectorAll<HTMLElement>('[data-slot="tables-pop"]') ?? [])].find((e) => e.getClientRects().length > 0) ?? null;
+  const properties = () => api.getPanel('properties')?.group.element.textContent ?? '';
+  const mapBlock = (page: Document | null, name: string) => until(() => page?.querySelector<HTMLElement>(`[data-slot="map-block"][data-block="${name}"]`) ?? null, 10_000);
+  popButton()?.click();
+  await until(() => api.getPanel('tables')?.group.api.location.type === 'popout', 10_000);
+  await wait(800);
+  const outPage = tablesPage();
+  (await mapBlock(outPage, 'Pit 2 B3'))?.click();
+  await wait(1500);
+  const before = properties();
+  (await mapBlock(outPage, 'Pit 3 B5'))?.click();
+  const pickedOut = await until(() => {
+    const now = properties();
+    return now !== before ? (now.match(/(\d+) selected/)?.[1] ?? null) : null;
+  }, 15_000);
+  expect('popped out, a block picked on the case map in its own window is picked in the view in the main window', outPage !== document && !!pickedOut && Number(pickedOut) > 0, { own_window: outPage !== document, picked: pickedOut });
+  popButton()?.click();
+  await until(() => api.getPanel('tables')?.group.api.location.type === 'grid', 10_000);
+  document.querySelector<HTMLElement>('[data-slot="side-switch"] [data-side="tables"]')?.click();
+  await wait(800);
+  await until(() => (document.querySelector('[data-slot="units-table"]')?.textContent ?? '').includes('Pit / 3 / B5 before and after rom_loss'), 20_000);
+
   // The working area by the dock's width (Case tab layout plan, decisions 6 and 8): the tab given the window, then
   // narrowed to 1,399 and 999 px. Step, units table and block map side by side to the foot; under 1,400 the block map
   // under the step; under 1,000 the units table under both and the header's figures in the pill's tip.

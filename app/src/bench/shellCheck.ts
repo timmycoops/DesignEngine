@@ -286,6 +286,51 @@ export async function checkShell(
     await goSide('design');
     expect('from Both back to Design, the view has its room again and the Tables side is away', Math.abs(size().width - viewOnDesign) <= 10 && !(api.getPanel('tables')?.group.api.isVisible ?? false), { view: size().width, was: viewOnDesign });
 
+    // The Tables side popped out into a window of its own (decision 0109), from Tables: Design in the main window with
+    // the case's Run on its ribbon; a click there works; Ctrl+K pressed there opens Find a command; its button brings it
+    // back; and Tables asked for while it's out brings it back filling the window.
+    const tablesWhere = () => api.getPanel('tables')?.group.api.location.type ?? '';
+    const tablesPage = () => api.getPanel('tables')?.group.element.ownerDocument ?? null;
+    const popButton = () => [...(tablesPage()?.querySelectorAll<HTMLElement>('[data-slot="tables-pop"]') ?? [])].find((e) => e.getClientRects().length > 0) ?? null;
+    await goSide('tables');
+    popButton()?.click();
+    for (let k = 0; k < 100 && tablesWhere() !== 'popout'; k++) await wait(100);
+    await settle();
+    const outPage = tablesPage();
+    const outSaid = {
+      where: tablesWhere(),
+      own_window: !!outPage && outPage !== document,
+      side: sideNow(),
+      run_on_main: !!document.querySelector('[data-slot="ribbon"] [data-slot="case-run"]'),
+      view: size().width,
+    };
+    expect('Pop out puts the Tables side in a window of its own, the main window on Design with the case and Run on its ribbon', outSaid.where === 'popout' && outSaid.own_window && outSaid.side === 'design' && outSaid.run_on_main && Math.abs(outSaid.view - viewOnDesign) <= 10, { ...outSaid, was: viewOnDesign });
+    outPage?.querySelector<HTMLElement>('[data-slot="tables-section-head"][data-section="schedule"], [data-slot="tables-section-folded"][data-section="schedule"]')?.click();
+    await settle();
+    const clicked = outPage?.querySelector<HTMLElement>('[data-tool-panel="tables-side"]')?.dataset.section ?? '';
+    const outView = outPage?.defaultView as (Window & typeof globalThis) | null;
+    if (outPage && outView) outPage.body.dispatchEvent(new outView.KeyboardEvent('keydown', { key: 'k', code: 'KeyK', ctrlKey: true, bubbles: true, cancelable: true }));
+    await settle();
+    const findOpened = !!document.querySelector('[cmdk-root]');
+    await closeMenu();
+    expect('in its window a click works, and Ctrl+K pressed there opens Find a command', outPage !== document && clicked === 'schedule' && findOpened, { section: clicked, find: findOpened });
+    popButton()?.click();
+    for (let k = 0; k < 100 && tablesWhere() === 'popout'; k++) await wait(100);
+    await settle();
+    const backSaid = { where: tablesWhere(), page_main: tablesPage() === document, shown: api.getPanel('tables')?.group.api.isVisible ?? null, side: sideNow() };
+    expect('its button brings it back: the Tables side in the main window again, away on Design', backSaid.where === 'grid' && backSaid.page_main && backSaid.shown === false && backSaid.side === 'design', backSaid);
+    await goSide('tables');
+    popButton()?.click();
+    for (let k = 0; k < 100 && tablesWhere() !== 'popout'; k++) await wait(100);
+    await settle();
+    const outAgain = tablesWhere();
+    await goSide('tables');
+    for (let k = 0; k < 100 && tablesWhere() === 'popout'; k++) await wait(100);
+    await settle();
+    const askedBack = { out_again: outAgain, where: tablesWhere(), filling: api.getPanel('tables')?.group.api.isMaximized() ?? false, side: sideNow() };
+    expect('Tables asked for while it is out brings it back, filling the window', askedBack.out_again === 'popout' && askedBack.where === 'grid' && askedBack.filling && askedBack.side === 'tables', askedBack);
+    await goSide('design');
+
     // A tool closed, its dock minimised, and the tool asked for from the toolbar.
     const slotName = api.getPanel('reserves')?.title ?? '';
     document.querySelector<HTMLButtonElement>(`button[aria-label^="Minimise ${slotName}"]`)?.click();

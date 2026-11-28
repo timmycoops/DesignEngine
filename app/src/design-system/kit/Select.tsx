@@ -148,8 +148,8 @@ function SelectList({ anchor, items, value, lit, onLight, onPick, onClose }: { a
   const [at, setAt] = useState<React.CSSProperties>({ visibility: 'hidden' });
   useLayoutEffect(() => {
     const r = anchor.getBoundingClientRect();
-    const below = window.innerHeight - r.bottom >= Math.min(LIST_HEIGHT, list.current?.scrollHeight ?? LIST_HEIGHT) + 8 || r.top < window.innerHeight - r.bottom;
-    setAt(below ? { left: r.left, top: r.bottom + 4, minWidth: r.width } : { left: r.left, bottom: window.innerHeight - r.top + 4, minWidth: r.width });
+    const below = (anchor.ownerDocument.defaultView ?? window).innerHeight - r.bottom >= Math.min(LIST_HEIGHT, list.current?.scrollHeight ?? LIST_HEIGHT) + 8 || r.top < (anchor.ownerDocument.defaultView ?? window).innerHeight - r.bottom;
+    setAt(below ? { left: r.left, top: r.bottom + 4, minWidth: r.width } : { left: r.left, bottom: (anchor.ownerDocument.defaultView ?? window).innerHeight - r.top + 4, minWidth: r.width });
   }, [anchor, items]);
   useEffect(() => {
     list.current?.querySelector<HTMLElement>('[data-lit="true"]')?.scrollIntoView({ block: 'nearest' });
@@ -157,11 +157,13 @@ function SelectList({ anchor, items, value, lit, onLight, onPick, onClose }: { a
   // A dock scrolled or the window resized moves the box from under it: the list closes.
   useEffect(() => {
     const scrolled = (e: Event) => !list.current?.contains(e.target as Node) && onClose();
-    window.addEventListener('scroll', scrolled, true);
-    window.addEventListener('resize', onClose);
+    // The window the list opens in: the main one, or the Tables side's popped out (decision 0109).
+    const win = anchor.ownerDocument.defaultView ?? window;
+    win.addEventListener('scroll', scrolled, true);
+    win.addEventListener('resize', onClose);
     return () => {
-      window.removeEventListener('scroll', scrolled, true);
-      window.removeEventListener('resize', onClose);
+      win.removeEventListener('scroll', scrolled, true);
+      win.removeEventListener('resize', onClose);
     };
   }, [onClose]);
   return createPortal(
@@ -198,6 +200,6 @@ function SelectList({ anchor, items, value, lit, onLight, onPick, onClose }: { a
         </div>
       ))}
     </div>,
-    document.body,
+    anchor.ownerDocument.body,
   );
 }

@@ -52,11 +52,43 @@ The map of places in `.claude/rules/app-ui.md` gains both.
 | `--workflow` | 38 of 38 |
 | `--select` | 40 of 40 |
 
+## Built: the pop-out
+
+- **The main window is made in code** (`setup` in `app/src-tauri/src/main.rs`, `create: false` on it in
+  `tauri.conf.json`), from the same config, with a new-window handler: a window the page asks for is made as one of the
+  app's own (`popout-<n>`, "Zovlyn Pit Design: Tables"), so the page it opens (`public/popout.html`) is served as the
+  main window's is. Only the main window asks before closing with work unsaved. A trial found a plain popup opens but
+  can't load the app's page, so dockview's pop-out never finished.
+- **Pop out** (the button at the head of the Tables side's list, `popOutTables` in `Workspace.tsx`): dockview's pop-out
+  moves the Tables panel into that window, at 70% of the main window's size; the main window goes to Design with the
+  case and Run kept on its ribbon. The empty group dockview leaves behind is hidden, so the view has its room.
+- **Back:** the same button, the window's X, or Tables or Both on the switch close the window; dockview puts the panel
+  back and the side as it stands is put on the layout (`backFromWindow`); the main window takes the focus again
+  (`core:window:allow-set-focus`).
+- **Menus, lists and tips open in the window they're used in**: the kit's Select and FilterInput draw into their box's
+  own page, and the dropdown, right-click and tooltip wrappers into the page `PortalRoot` gives
+  (`design-system/portalRoot.ts`), which the Tables side sets while it's out.
+- **Keys pressed in its window reach the app's shortcuts** (`passKeys`): Find a command, Save, Undo and Redo, Esc,
+  Delete; typing in a box keeps its keys, but for Save and Find a command.
+- **The case's picks reach the view while it's out**, as with both shown (`viewBeside` in `tablesSide.ts`: both shown,
+  or popped out): a block picked on the case's map in its window has its solids picked in the view in the main window,
+  and Show in 3D frames them there without leaving the case.
+
+| Check | Result |
+|---|---|
+| `--shell`, release build from this branch | 68 of 68, 4 new: Pop out from Tables puts the panel in a window of its own with the main window on Design, its view at its full width and the case's Run on its ribbon; a click there works and Ctrl+K pressed there opens Find a command; its button brings it back, away on Design; Tables asked for while it's out brings it back filling the window |
+| `--case`, every check counted | 68 of 71, 1 new: popped out, Pit 3 B5 picked on the case's map in its own window picks its 20 solids in the view in the main window. The 3 left fail the same on main (66 of 69): Open another dataflow, then both up to date, and New case, all from the used demo. Earlier counts (53 of 55) left out the 15 checks that carry no detail |
+| `--workflow` | 38 of 38 |
+| `--select` | 40 of 40 |
+| `cargo clippy -p zd-app --all-targets -- -D warnings` | clean |
+
 ## Known limits
 
 - **On a 1,600 px window Both is tight**: with Layers and Properties open, the view and the Tables panel get about 460 px
-  each. Minimise Layers or Properties to their strips for room, or pop the Tables side out (decision 3) once it lands.
+  each. Minimise Layers or Properties to their strips for room, or pop the Tables side out.
 - **With the list folded**, a section's number opens its first item, or the one it showed last; another case is picked
   on the top row, but another parameter table or dataflow needs the list open (wider).
 - **The Tables panel shows no tab in Both**, as on Tables: it's dragged by its edge, not its tab.
 - **Picks go one way from the case:** a solid picked in the view doesn't pick its block on the case's map.
+- **The popped-out window isn't remembered across a restart** beyond what the saved layout holds: dockview reopens it
+  where it can; if it can't, the panel is back in the main window.

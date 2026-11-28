@@ -11,6 +11,7 @@ import {
   themeLight,
 } from 'dockview-react';
 import { Maximize2, Minimize2, Minus } from 'lucide-react';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { cn } from 'cn';
 import { useLook } from './useLook';
 import { BuilderPanel } from '@/panels/BuilderPanel';
@@ -31,7 +32,7 @@ import { LicencePanel } from '@/panels/LicencePanel';
 import { ViewControlsPanel } from '@/panels/ViewControlsPanel';
 import { TablesSidePanel } from '@/panels/TablesSidePanel';
 import { type Dock, isItem, type PanelId, PANELS, panelSide, TOOL_DOCK_WIDTH } from './panels';
-import { openItem, type Section, setShowing } from './tablesSide';
+import { openItem, poppedNow, type Section, setPopped, setPopper, setShowing } from './tablesSide';
 import type { Showing } from '@/tools';
 
 /** What each panel draws. A panel in the list with nothing to draw doesn't compile. */
@@ -158,7 +159,8 @@ function gatherTables(api: DockviewApi, withBoth: boolean): DockviewGroupPanel |
   for (const p of PANELS) {
     if (p.side !== 'tables' && !(withBoth && p.side === 'both')) continue;
     const panel = api.getPanel(p.id);
-    if (!panel || panel.group === group) continue;
+    // One in a window of its own stays there (decision 0109).
+    if (!panel || panel.group === group || panel.group.api.location.type !== 'grid') continue;
     group ??= groupUnderView(api);
     panel.api.moveTo({ group, position: 'center' });
   }
@@ -174,6 +176,12 @@ export function showSide(api: DockviewApi, side: Showing) {
   if (currentSide === 'design' && !api.hasMaximizedGroup()) designDocks = dockSizes(api);
   currentSide = side;
   setShowing(side);
+  // Tables or Both asked for while the Tables side is in its own window (decision 0109): it comes back first, and the
+  // side is put on the layout once it's back in the grid (`backFromWindow`).
+  if (side !== 'design' && poppedGroup(api)) {
+    poppedWindow?.close();
+    return;
+  }
   if (side === 'design') {
     if (api.hasMaximizedGroup()) api.exitMaximizedGroup();
     gatherTables(api, false)?.api.setVisible(false);
@@ -207,6 +215,79 @@ export function showSide(api: DockviewApi, side: Showing) {
   }
   keepMounted(api);
   onMinimisedChange?.();
+}
+
+/** The Tables panel's group while it's in a window of its own, and that window (decision 0109). */
+const poppedGroup = (api: DockviewApi) => {
+  const panel = api.getPanel('tables');
+  return panel && panel.group.api.location.type === 'popout' ? panel.group : undefined;
+};
+let poppedWindow: Window | null = null;
+
+/**
+ * The Tables side into a window of its own, for a second monitor (decision 0109): dockview's pop-out, into an app window
+ * the shell makes for it (`on_new_window` in main.rs), the main window left on Design. One app, so picks, edits and Run
+ * stay shared.
+ */
+async function popOutTables(api: DockviewApi) {
+  if (poppedGroup(api)) return poppedWindow?.focus();
+  if (currentSide === 'design') showSide(api, 'both');
+  const group = api.getPanel('tables')?.group;
+  if (!group) return;
+  if (api.hasMaximizedGroup()) api.exitMaximizedGroup();
+  const position = {
+    left: window.screenX + 60,
+    top: window.screenY + 60,
+    width: Math.max(1000, Math.round(window.outerWidth * 0.7)),
+    height: Math.max(700, Math.round(window.outerHeight * 0.85)),
+  };
+  const opened = await api.addPopoutGroup(group, {
+    popoutUrl: '/popout.html',
+    position,
+    onDidOpen: ({ window: w }) => {
+      poppedWindow = w;
+      passKeys(w);
+    },
+  });
+  if (!opened || !poppedGroup(api)) return;
+  // The empty group dockview keeps in the grid to bring it back to: away, so the view has its room.
+  for (const g of api.groups) if (g.api.location.type === 'grid' && g.panels.length === 0 && g.api.isVisible) g.api.setVisible(false);
+  setPopped(true);
+  onSideAsked?.('design');
+  showSide(api, 'design');
+}
+
+/** The Tables side back into the main window: its window closed, dockview puts the group back. */
+const popBackTables = () => poppedWindow?.close();
+
+/**
+ * Once the Tables side's window has closed (by its X, or asked back), the side as it stands put on the layout: hidden on
+ * Design, filling the window on Tables, beside the view in Both.
+ */
+function backFromWindow(api: DockviewApi) {
+  if (!poppedNow() || poppedGroup(api)) return;
+  setPopped(false);
+  poppedWindow = null;
+  setTimeout(() => showSide(api, currentSide), 0);
+  // The main window takes the keys again.
+  void getCurrentWindow()
+    .setFocus()
+    .catch(() => undefined);
+}
+
+/**
+ * Keys pressed in the Tables side's window reach the app's shortcuts, as they would in the main window: Find a command,
+ * Save, Undo and Redo, Esc, Delete. Typing in a box keeps its keys, but for Save and Find a command.
+ */
+function passKeys(w: Window) {
+  w.addEventListener('keydown', (e) => {
+    const t = e.target as HTMLElement | null;
+    const typing = !!t && (t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName));
+    if (typing && !((e.ctrlKey || e.metaKey) && ['s', 'k'].includes(e.key.toLowerCase()))) return;
+    const copy = new KeyboardEvent('keydown', { key: e.key, code: e.code, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey, metaKey: e.metaKey, repeat: e.repeat, bubbles: true, cancelable: true });
+    document.body.dispatchEvent(copy);
+    if (copy.defaultPrevented) e.preventDefault();
+  });
 }
 
 /** The width the Tables side takes beside the view in Both, as a share of the room the two have. */
@@ -662,7 +743,8 @@ export function Workspace({
       const tables = tablesGroup(api);
       setMinimised(
         api.groups
-          .filter((g) => !g.api.isVisible && g.api.location.type === 'grid' && g !== tables)
+          // An empty group is no dock to bring back: the one dockview keeps while the Tables side is in its window.
+          .filter((g) => !g.api.isVisible && g.api.location.type === 'grid' && g !== tables && g.panels.length > 0)
           .map((g) => ({ groupId: g.id, edge: edges[g.id] ?? 'right', panels: g.panels.map((p) => ({ id: p.id, title: p.title ?? p.id })) })),
       );
       setAllHidden(api.hasMaximizedGroup());
@@ -685,7 +767,11 @@ export function Workspace({
     // The docks' sizes after each change to the layout, kept while a group fills the window: what they go back to when a
     // dock's last tab is closed, and when the workspace changes size.
     let held = dockSizes(api);
+    // The Tables side's window: its button pops it out and brings it back; closed, the side goes back on the layout.
+    setPopper({ out: () => void popOutTables(api), back: popBackTables });
+    setPopped(!!poppedGroup(api));
     const layout = api.onDidLayoutChange(() => {
+      backFromWindow(api);
       bareView(api);
       if (!api.hasMaximizedGroup()) held = dockSizes(api);
       saveLayout(api);

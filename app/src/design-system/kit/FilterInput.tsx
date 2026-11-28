@@ -36,8 +36,8 @@ function SuggestionList({ anchor, offered, lit, onLight, onTake }: { anchor: HTM
   const [at, setAt] = useState<React.CSSProperties>({});
   useLayoutEffect(() => {
     const r = anchor.getBoundingClientRect();
-    const below = window.innerHeight - r.bottom >= LIST_HEIGHT + 8 || r.top < LIST_HEIGHT + 8;
-    setAt(below ? { left: r.left, top: r.bottom + 4, minWidth: r.width } : { left: r.left, bottom: window.innerHeight - r.top + 4, minWidth: r.width });
+    const below = (anchor.ownerDocument.defaultView ?? window).innerHeight - r.bottom >= LIST_HEIGHT + 8 || r.top < LIST_HEIGHT + 8;
+    setAt(below ? { left: r.left, top: r.bottom + 4, minWidth: r.width } : { left: r.left, bottom: (anchor.ownerDocument.defaultView ?? window).innerHeight - r.top + 4, minWidth: r.width });
   }, [anchor, offered]);
   useEffect(() => {
     list.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
@@ -68,7 +68,7 @@ function SuggestionList({ anchor, offered, lit, onLight, onTake }: { anchor: HTM
       ))}
       {offered.hint && <div className={cn('px-1.5 py-1 text-muted-foreground', offered.items.length > 0 && 'border-t border-border')} data-slot="filter-hint">{offered.hint}</div>}
     </div>,
-    document.body,
+    anchor.ownerDocument.body,
   );
 }
 

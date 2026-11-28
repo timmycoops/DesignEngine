@@ -119,10 +119,33 @@ fn main() {
             licence::load_licence,
             licence::command_modules,
         ])
+        .setup(|app| {
+            // The main window, made here rather than from the config so it can open a window of its own: the Tables
+            // side popped out (decision 0109). The config holds its size and title, with `create` off.
+            let config = app.config().app.windows.iter().find(|w| w.label == "main").cloned().expect("the main window's config");
+            let handle = app.handle().clone();
+            let popped = std::sync::atomic::AtomicUsize::new(0);
+            tauri::WebviewWindowBuilder::from_config(app.handle(), &config)?
+                .on_new_window(move |_url, features| {
+                    // A window of the app's own, so the page it opens is served as the main window's is.
+                    let n = popped.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let made = tauri::WebviewWindowBuilder::new(&handle, format!("popout-{n}"), tauri::WebviewUrl::External("about:blank".parse().expect("a URL")))
+                        .window_features(features)
+                        .title("Zovlyn Pit Design: Tables")
+                        .build();
+                    match made {
+                        Ok(window) => tauri::webview::NewWindowResponse::Create { window },
+                        Err(_) => tauri::webview::NewWindowResponse::Deny,
+                    }
+                })
+                .build()?;
+            Ok(())
+        })
         .on_window_event(|window, event| {
             // Closing with work unsaved, or a run going, asks first (app review brief, 17 Nov, item 1): the window
             // stays and the app is told to ask Save, Don't save or Cancel. Nothing to lose closes at once.
             if let WindowEvent::CloseRequested { api, .. } = event
+                && window.label() == "main"
                 && window.state::<state::AppState>().app.lock().is_ok_and(|app| app.would_lose_work())
             {
                 api.prevent_close();
