@@ -128,6 +128,11 @@ export function setPopped(now: boolean) {
 export const setPopper = (p: typeof popper) => {
   popper = p;
 };
+/**
+ * Whether the view is on screen beside the Tables side: both shown, or the Tables side popped out with the view in the
+ * main window. The case's picks go to the view then, and Show in 3D frames there without leaving the case (0109).
+ */
+export const viewBeside = () => showing === 'both' || popped;
 /** The Tables side into a window of its own, for a second monitor. */
 export const popOut = () => popper?.out();
 /** The Tables side back into the main window. */
@@ -138,4 +143,6 @@ export function resetItems() {
   open = { section: 'case', id: null };
   caseNow = null;
   last.clear();
+  showing = 'design';
+  popped = false;
 }

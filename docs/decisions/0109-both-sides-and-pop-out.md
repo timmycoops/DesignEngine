@@ -70,11 +70,14 @@ The map of places in `.claude/rules/app-ui.md` gains both.
   (`design-system/portalRoot.ts`), which the Tables side sets while it's out.
 - **Keys pressed in its window reach the app's shortcuts** (`passKeys`): Find a command, Save, Undo and Redo, Esc,
   Delete; typing in a box keeps its keys, but for Save and Find a command.
+- **The case's picks reach the view while it's out**, as with both shown (`viewBeside` in `tablesSide.ts`: both shown,
+  or popped out): a block picked on the case's map in its window has its solids picked in the view in the main window,
+  and Show in 3D frames them there without leaving the case.
 
 | Check | Result |
 |---|---|
 | `--shell`, release build from this branch | 68 of 68, 4 new: Pop out from Tables puts the panel in a window of its own with the main window on Design, its view at its full width and the case's Run on its ribbon; a click there works and Ctrl+K pressed there opens Find a command; its button brings it back, away on Design; Tables asked for while it's out brings it back filling the window |
-| `--case` | 53 of 55, as before (the demo's two) |
+| `--case`, every check counted | 68 of 71, 1 new: popped out, Pit 3 B5 picked on the case's map in its own window picks its 20 solids in the view in the main window. The 3 left fail the same on main (66 of 69): Open another dataflow, then both up to date, and New case, all from the used demo. Earlier counts (53 of 55) left out the 15 checks that carry no detail |
 | `--workflow` | 38 of 38 |
 | `--select` | 40 of 40 |
 | `cargo clippy -p zd-app --all-targets -- -D warnings` | clean |
