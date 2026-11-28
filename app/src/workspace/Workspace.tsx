@@ -12,6 +12,7 @@ import {
 } from 'dockview-react';
 import { Maximize2, Minimize2, Minus } from 'lucide-react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { getAllWebviewWindows } from '@tauri-apps/api/webviewWindow';
 import { cn } from 'cn';
 import { useLook } from './useLook';
 import { BuilderPanel } from '@/panels/BuilderPanel';
@@ -268,10 +269,23 @@ function backFromWindow(api: DockviewApi) {
   if (!poppedNow() || poppedGroup(api)) return;
   setPopped(false);
   poppedWindow = null;
+  closePoppedWindows();
   setTimeout(() => showSide(api, currentSide), 0);
   // The main window takes the keys again.
   void getCurrentWindow()
     .setFocus()
+    .catch(() => undefined);
+}
+
+/**
+ * The Tables side's window itself closed once its panel is back. Closing its page (dockview's way back, from the switch
+ * or its button) leaves the app window round it standing empty, so the shell is asked to take it away; by its X it's
+ * gone already. Any left from an earlier pop-out go too.
+ */
+function closePoppedWindows() {
+  if (!('__TAURI_INTERNALS__' in window)) return;
+  void getAllWebviewWindows()
+    .then((all) => Promise.all(all.filter((w) => w.label.startsWith('popout-')).map((w) => w.destroy().catch(() => undefined))))
     .catch(() => undefined);
 }
 
