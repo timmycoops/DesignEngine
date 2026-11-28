@@ -1,8 +1,7 @@
+import { Check, TextInput } from '@/design-system/kit';
 import { useEffect, useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { Button } from '@/design-system/ui/button';
-import { Input } from '@/design-system/ui/input';
-import { Checkbox } from '@/design-system/ui/checkbox';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from '@/design-system/ui/dropdown-menu';
 import { css, ISSUE, NO_COAL, rampCss } from '@/viewport/ramp';
 import { type Bands, INTERVALS, rlColour, rlRampCss } from '@/viewport/rlColour';
@@ -77,7 +76,7 @@ function FieldLegend() {
       </div>
       <div className="mt-1 flex items-center gap-2">
         <label className="flex items-center gap-1.5" title="Each solid takes its block's value, the field added up over the block's seams and benches, not its own leaf's">
-          <Checkbox checked={byBlock} onCheckedChange={(c) => colourBlocksByField({ table, column, byBlock: c === true })} aria-label="By block" />
+          <Check checked={byBlock} onChange={(c) => colourBlocksByField({ table, column, byBlock: c })} label="By block" />
           By block
         </label>
         <span className="ml-auto text-muted-foreground">
@@ -152,14 +151,12 @@ function RlLegend() {
         </>
       )}
       <div className="mt-1.5 flex flex-col gap-1">
-        <label className="flex items-center gap-1.5">
-          <Checkbox checked={contours.edge_lines} onCheckedChange={(c) => setContours({ ...contours, edge_lines: c === true })} />
+        <Check checked={contours.edge_lines} label="Contour lines" onChange={(c) => setContours({ ...contours, edge_lines: c })}>
           Contour lines
-        </label>
-        <label className="flex items-center gap-1.5" title="One colour range across everything coloured by RL, so an RL is the same colour on every surface">
-          <Checkbox checked={contours.shared} onCheckedChange={(c) => setContours({ ...contours, shared: c === true })} />
+        </Check>
+        <Check checked={contours.shared} label="Same colours on every surface" title="One colour range across everything coloured by RL, so an RL is the same colour on every surface" onChange={(c) => setContours({ ...contours, shared: c })}>
           Same colours on every surface
-        </label>
+        </Check>
       </div>
     </div>
   );
@@ -231,7 +228,7 @@ function SeamLegend({ seamView }: { seamView: SeamShown }) {
             <span>{fmt(bands.high, 3)}</span>
           </div>
           <label className="mt-1 flex items-center gap-1.5" title="Each block whose seam is this horizon, coloured by its own interrogated value on these bands: a block that doesn't match the contours round it stands out">
-            <Checkbox checked={blocksOn} onCheckedChange={(on) => colourSeamBlocks(on === true ? seamView : null)} aria-label="Colour this seam's blocks by their value" />
+            <Check checked={blocksOn} onChange={(on) => colourSeamBlocks(on ? seamView : null)} label="Colour this seam's blocks by their value" />
             Colour {r.horizon}'s blocks by their {r.variable}
           </label>
         </>
@@ -270,12 +267,12 @@ function TypedEntry() {
   };
   return (
     <div className="absolute bottom-3 left-1/2 w-[28rem] max-w-[calc(100%-1.5rem)] -translate-x-1/2 rounded-md border bg-card/90 p-2 text-xs shadow-md backdrop-blur-sm">
-      <Input
-        className="h-7 font-mono text-xs"
+      <TextInput
+        className="font-mono"
         value={text}
-        placeholder="E N [RL]   or   @distance<bearing [RL | grade%]"
-        aria-label="Type a vertex"
-        onChange={(e) => setText(e.target.value)}
+        placeholder="E N [RL] or @distance<bearing [RL | grade%]"
+        label="Type a vertex"
+        onChange={(value) => setText(value)}
         onKeyDown={(e) => {
           if (e.key === 'Enter') void submit();
           if (e.key === 'Escape') e.currentTarget.blur();

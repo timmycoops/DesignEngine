@@ -2,10 +2,9 @@ import { ListPlus, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import type { LogEntry, RunRecord } from '@/bridge';
 import { Button } from '@/design-system/ui/button';
-import { Input } from '@/design-system/ui/input';
 import { columnHelper, DataTable } from '@/design-system/DataTable';
 import { useWorkspace } from '@/workspace/context';
-import { lookAt, NoteLine } from '@/design-system/kit';
+import { lookAt, NoteLine, PanelHead, TextInput } from '@/design-system/kit';
 import { clock, fmt } from './format';
 import { tickRuns } from './workflow';
 
@@ -191,10 +190,11 @@ export function RunLogPanel() {
   return (
     <div className="flex h-full">
       <div className="flex min-w-0 flex-1 flex-col">
+        <PanelHead line="Every run, newest first: what it read, made and said" more="Click a run for its record beside the table. Tick runs to capture them as a workflow, a step a run." />
         {live.length > 0 && (
           <div className="flex shrink-0 items-center gap-2 border-b px-2 py-1 text-xs">
             <span className="text-muted-foreground">{live.length} run{live.length === 1 ? '' : 's'} ticked</span>
-            <Input className="h-6 w-48 px-1.5 text-xs" value={name} aria-label="Workflow name" onChange={(e) => setName(e.target.value)} />
+            <TextInput size="sm" className="w-48" value={name} label="Workflow name" onChange={(value) => setName(value)} />
             <Button size="sm" className="h-6 px-2 text-xs" disabled={capturing} title="Each run a step, in log order, its objects found by rule; opens the Workflow panel" onClick={() => void capture()}>
               <ListPlus className="size-3.5" /> Capture as a workflow
             </Button>

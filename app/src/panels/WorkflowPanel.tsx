@@ -3,10 +3,9 @@ import { cn } from 'cn';
 import { InputFilter } from './InputFilter';
 import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/design-system/ui/button';
-import { Input } from '@/design-system/ui/input';
 import type { LogEntry, Note, ReportFile, WorkflowRecord, WorkflowStep } from '@/bridge';
 import { objectDetails, openWorkflowReport, projectSummary, workflowReports, writeWorkflowReport } from '@/bridge';
-import { Field, IconButton, ObjectMenu, plainNote, type RunReport, Select, StatusBadge, type ToolAction, ToolPanel, ToolSection } from '@/design-system/kit';
+import { Check, Field, IconButton, ObjectMenu, ok, plainNote, type RunReport, type Said, SaidLine, saidOfError, Select, StatusBadge, TextInput, type ToolAction, ToolPanel, ToolSection } from '@/design-system/kit';
 import { LastBadge, plural, StepSettings, usePickedWorkflow } from './workflowParts';
 import { useWorkspace } from '@/workspace/context';
 import { fmt } from './format';
@@ -88,7 +87,7 @@ export function WorkflowPanel() {
 
   // The reports written for this workflow beside the project (decision 0068), newest first.
   const [reports, setReports] = useState<ReportFile[]>([]);
-  const [reportSaid, setReportSaid] = useState<{ error?: string; text?: string }>({});
+  const [reportSaid, setReportSaid] = useState<Said | null>(null);
   const [writing, setWriting] = useState(false);
   const projectPath = summary?.path ?? null;
   useEffect(() => {
@@ -106,10 +105,10 @@ export function WorkflowPanel() {
     setWriting(true);
     try {
       const file = await writeWorkflowReport(chosen.id);
-      setReportSaid({ text: `Written and opened in your browser: ${file.name}` });
+      setReportSaid(ok(`Written and opened in your browser: ${file.name}`));
       setReports(await workflowReports(chosen.id));
     } catch (e) {
-      setReportSaid({ error: String(e) });
+      setReportSaid(saidOfError(e));
     }
     setWriting(false);
   };
@@ -329,7 +328,7 @@ export function WorkflowPanel() {
             )}
           </Field>
           <Field label="New case" hint="The steps as Base, on layers named for it, until you change a step's settings">
-            <Input className="h-7 w-28 px-1.5 text-xs" value={newCase} placeholder="50m" aria-label="New case name" onChange={(e) => setNewCase(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addCase()} />
+            <TextInput className="w-28" value={newCase} placeholder="50m" label="New case name" onChange={(value) => setNewCase(value)} onKeyDown={(e) => e.key === 'Enter' && addCase()} />
             <Button variant="outline" size="sm" className="h-7 px-2 text-xs" disabled={!newCase.trim() || columns.some((c) => c.toLowerCase() === newCase.trim().toLowerCase())} onClick={addCase}>
               <Plus className="size-3.5" /> Add
             </Button>
@@ -365,7 +364,7 @@ export function WorkflowPanel() {
                   type="button"
                   className="truncate text-left text-primary hover:underline"
                   title={`Open ${r.path} in your browser`}
-                  onClick={() => void openWorkflowReport(r.path).catch((e) => setReportSaid({ error: String(e) }))}
+                  onClick={() => void openWorkflowReport(r.path).catch((e) => setReportSaid(saidOfError(e)))}
                 >
                   {r.name}
                 </button>
@@ -373,7 +372,7 @@ export function WorkflowPanel() {
               {reports.length > 5 && <span className="text-muted-foreground">and {reports.length - 5} older, in the reports folder beside the project</span>}
             </div>
           )}
-          {reportSaid.error ? <div className="text-destructive">{reportSaid.error}</div> : reportSaid.text ? <div className="text-ok">{reportSaid.text}</div> : null}
+          <SaidLine said={reportSaid} />
         </ToolSection>
       )}
 
@@ -396,14 +395,14 @@ export function WorkflowPanel() {
           }
         >
           <label className="flex items-center gap-1.5 text-muted-foreground" title="After a run, show what it started from and what its last step made, and hide the layers only the steps in between made">
-            <input
-              type="checkbox"
+            <Check
+             
               checked={tidy}
-              aria-label="Tidy after a run"
-              onChange={(e) => {
-                setTidy(e.target.checked);
+              label="Tidy after a run"
+              onChange={(on) => {
+                setTidy(on);
                 try {
-                  localStorage.setItem(TIDY_KEY, e.target.checked ? 'on' : 'off');
+                  localStorage.setItem(TIDY_KEY, on ? 'on' : 'off');
                 } catch {
                   // Storage unavailable: the switch holds for this session.
                 }
@@ -425,7 +424,7 @@ export function WorkflowPanel() {
             {steps.map((step, at) => (
               <li key={step.id} className={step.on === false ? 'opacity-50' : undefined}>
                 <div className="flex items-center gap-1">
-                  <input type="checkbox" checked={step.on !== false} aria-label={`Step ${at + 1} on`} title="On: switched off, a step is passed over" onChange={(e) => edit((s) => s.map((t, k) => (k === at ? { ...t, on: e.target.checked ? undefined : false } : t)))} />
+                  <Check checked={step.on !== false} label={`Step ${at + 1} on`} title="On: switched off, a step is passed over" onChange={(on) => edit((s) => s.map((t, k) => (k === at ? { ...t, on: on ? undefined : false } : t)))} />
                   <span className="w-5 text-right tabular-nums text-muted-foreground">{at + 1}</span>
                   <button
                     type="button"
@@ -521,11 +520,11 @@ export function WorkflowPanel() {
                     />
                   )}
                   {editing === at ? (
-                    <Input
+                    <TextInput
+                      size="sm"
                       autoFocus
-                      className="h-6 px-1.5 text-xs"
                       defaultValue={step.note ?? ''}
-                      aria-label={`Step ${at + 1} note`}
+                      label={`Step ${at + 1} note`}
                       onBlur={(e) => {
                         setEditing(null);
                         if (e.target.value !== (step.note ?? '')) edit((s) => s.map((t, k) => (k === at ? { ...t, note: e.target.value || undefined } : t)));

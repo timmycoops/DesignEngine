@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Dialog } from 'radix-ui';
 import { type ObjectSummary, objectsAttributes } from '../bridge';
-import { Choice, Select } from '../design-system/kit';
+import { Choice, DialogList, KitDialog, Select } from '../design-system/kit';
 import { Button } from '../design-system/ui/button';
 import { cn } from 'cn';
 
@@ -72,18 +71,22 @@ export function ExportSolidsDialog({
   const lacking = picked.length === 0 ? 0 : (solids ?? []).filter((solid) => picked.some((key) => key !== 'name' && key !== 'layer' && !(key in attributesOf(solid)))).length;
 
   return (
-    <Dialog.Root open={solids !== null} onOpenChange={(open) => !open && onCancel()}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/50" />
-        <Dialog.Content className="fixed top-1/2 left-1/2 z-50 flex max-h-[85vh] w-[min(640px,92vw)] -translate-x-1/2 -translate-y-1/2 flex-col gap-3 rounded-lg border bg-card p-4 text-sm shadow-lg">
-          <div>
-            <Dialog.Title className="font-semibold">Export {n === 1 ? '1 solid' : `${n.toLocaleString()} solids`} to a zip</Dialog.Title>
-            <Dialog.Description className="text-xs text-muted-foreground">
-              One DXF a solid, with solids.csv listing each solid's number, file, volume and attributes. Deswik imports the zip and puts each file's solid on
-              a layer named for the file.
-            </Dialog.Description>
-          </div>
-
+    <KitDialog
+      open={solids !== null}
+      onClose={onCancel}
+      title={`Export ${n === 1 ? '1 solid' : `${n.toLocaleString()} solids`} to a zip`}
+      line="One DXF a solid, with solids.csv listing each solid's number, file, volume and attributes. Deswik imports the zip and puts each file's solid on a layer named for the file."
+      foot={
+        <>
+          <Button variant="ghost" size="sm" onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button size="sm" autoFocus disabled={n === 0} onClick={() => onExport({ name_from: picked, separator, layer_in_file: layerInFile })}>
+            Export to a zip…
+          </Button>
+        </>
+      }
+    >
           <div className="flex flex-col gap-1">
             <div className="text-xs font-medium">Name each file from</div>
             <div className="flex flex-wrap gap-1">
@@ -129,30 +132,20 @@ export function ExportSolidsDialog({
             </span>
           </div>
 
-          <div className="min-h-0 flex-1 overflow-auto rounded border text-xs">
+          <DialogList>
             {(solids ?? []).slice(0, 6).map((solid, k) => (
               <div key={solid.id} className="truncate px-2 py-0.5" title={solid.name}>
                 {k + 1}. {fileOf(solid)}
               </div>
             ))}
             {n > 6 && <div className="px-2 py-0.5 text-muted-foreground">and {(n - 6).toLocaleString()} more</div>}
-          </div>
+          </DialogList>
           {lacking > 0 && (
             <div className="text-xs text-warning">
               {lacking.toLocaleString()} of them lack one of those attributes: that part of the file's name will be empty.
             </div>
           )}
 
-          <div className="flex justify-end gap-2">
-            <Button variant="ghost" size="sm" onClick={onCancel}>
-              Cancel
-            </Button>
-            <Button size="sm" autoFocus disabled={n === 0} onClick={() => onExport({ name_from: picked, separator, layer_in_file: layerInFile })}>
-              Export to a zip…
-            </Button>
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+    </KitDialog>
   );
 }

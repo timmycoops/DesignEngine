@@ -106,6 +106,19 @@ export interface ToolAction {
   };
 }
 
+/**
+ * The head of a part of a long panel, as Face design's 1. Lines, 2. Profile: a hairline above it, its title, and its own
+ * buttons at the end. What follows it is the part, to the next head.
+ */
+export function SectionHead({ children, aside }: { children: ReactNode; aside?: ReactNode }) {
+  return (
+    <div data-slot="section-head" className="mt-3 flex items-center gap-2 border-t px-3 pt-2 pb-1">
+      <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{children}</h3>
+      {aside && <span className="ml-auto flex items-center gap-1">{aside}</span>}
+    </div>
+  );
+}
+
 /** A titled part of a tool panel: Inputs, Settings, Output, or one of its own. */
 export function ToolSection({ title, children, aside, className }: { title?: ReactNode; children: ReactNode; aside?: ReactNode; className?: string }) {
   return (

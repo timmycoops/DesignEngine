@@ -3,9 +3,8 @@ import { Fragment, type ReactNode, useEffect, useMemo, useRef, useState } from '
 import { ReservesBalance } from './ReservesBalanceView';
 import { type Breakdown, type CalculatedColumn, type ChangedSince, type Grid, type GridColumn, type GridRow, reservesBreakdown, reservesChanged, reservesFilterRows, reservesNodeOf, reservesRerunParams, reservesSolids, reservesTree, type ReservesNode, tableGrid } from '@/bridge';
 import { type When, whenText } from '@/filters';
-import { Choice, Field, FilterInput, GroupBy, IconButton, ObjectMenu } from '@/design-system/kit';
+import { Check, Choice, Field, FilterInput, GroupBy, IconButton, ObjectMenu, ok, refused, type Said, SaidLine, saidOfError, TextInput } from '@/design-system/kit';
 import { Button } from '@/design-system/ui/button';
-import { Checkbox } from '@/design-system/ui/checkbox';
 import { cn } from 'cn';
 import { useWorkspace } from '@/workspace/context';
 import { asPutBack, breakdownCsv, cellText, fieldRows, type Isolation, isolation, nodeForLeaf, samePath, startsWith, unitLabel } from './reservesTable';
@@ -120,7 +119,7 @@ export function ReservesTable({ tableId, picker, onDeleted }: { tableId: string;
     setAcrossState(a);
     writeAcross(a);
   };
-  const [said, setSaid] = useState<string | null>(null);
+  const [said, setSaid] = useState<Said | null>(null);
   const [view, setViewState] = useState<View>(readView);
   const setView = (v: View) => {
     setViewState(v);
@@ -321,9 +320,9 @@ export function ReservesTable({ tableId, picker, onDeleted }: { tableId: string;
     setRerunning(true);
     try {
       const reply = await runRecord('reserves.run', await reservesRerunParams(table.id, []));
-      setSaid(reply.error ?? 'Every block run again into the table: one undo puts it back');
+      setSaid(reply.error ? refused(reply.error) : ok('Every block run again into the table: one undo puts it back'));
     } catch (e) {
-      setSaid(String(e));
+      setSaid(saidOfError(e));
     } finally {
       setRerunning(false);
     }
@@ -353,7 +352,7 @@ export function ReservesTable({ tableId, picker, onDeleted }: { tableId: string;
     if (!table) return;
     const reply = await runRecord('table.remove_column', { table: table.id, column: c.name });
     setError(reply.error ?? null);
-    if (!reply.error) setSaid(`${c.name} taken out: one undo puts it back`);
+    if (!reply.error) setSaid(ok(`${c.name} taken out: one undo puts it back`));
   };
   const changedLine = changed ? changedWords(changed) : '';
   const rowLit = (r: GridRow) => (r.kind === 'leaf' ? !!r.words && samePath(r.words, node) : groupIsLevels && r.kind === 'group' && samePath(r.path, node));
@@ -403,7 +402,7 @@ export function ReservesTable({ tableId, picker, onDeleted }: { tableId: string;
     if (!table) return;
     const ids = await reservesSolids(table.id, node, when);
     setSelection(ids);
-    setSaid(`${fmt(ids.length)} solid${ids.length === 1 ? '' : 's'} picked`);
+    setSaid(ok(`${fmt(ids.length)} solid${ids.length === 1 ? '' : 's'} picked`));
   };
   const isolatedKey = table ? `node:${table.id}|${keyOf(node)}|${whenKey}` : '';
   const layersKey = table ? `layers:${table.id}` : '';
@@ -418,7 +417,7 @@ export function ReservesTable({ tableId, picker, onDeleted }: { tableId: string;
       layers.filter((l) => l.visible).map((l) => l.id),
       layers.filter((l) => !l.visible).map((l) => l.id),
     );
-    setSaid('Shown as it was');
+    setSaid(ok('Shown as it was'));
   };
   /** The layers and objects as they'll be once what's alone is put back: what the next Show or Isolate starts from. */
   const startFrom = () => asPutBack(summary?.objects ?? [], summary?.layers ?? [], alone);
@@ -430,14 +429,14 @@ export function ReservesTable({ tableId, picker, onDeleted }: { tableId: string;
     await putBack();
     if (was === isolatedKey) return;
     const ids = await reservesSolids(table.id, node, when);
-    if (ids.length === 0) return setSaid('No solids to isolate');
+    if (ids.length === 0) return setSaid(refused('No solids to isolate'));
     const changed = isolation(ids, start.objects, start.layers);
     setAlone({ key: isolatedKey, layers: start.layers.map((l) => ({ id: l.id, visible: l.visible })), changed });
     if (changed.unhide.length) await setObjectsVisible(changed.unhide, true);
     if (changed.hide.length) await setObjectsVisible(changed.hide, false);
     await setLayersVisible(changed.showLayers, changed.hideLayers);
     zoomTo(ids);
-    setSaid(`${fmt(ids.length)} solid${ids.length === 1 ? '' : 's'} alone on show`);
+    setSaid(ok(`${fmt(ids.length)} solid${ids.length === 1 ? '' : 's'} alone on show`));
   };
   /** The table's solids' layers on and every other layer off; again, the layers as they were. */
   const showTableLayers = async () => {
@@ -449,7 +448,7 @@ export function ReservesTable({ tableId, picker, onDeleted }: { tableId: string;
     const on = new Set(tableLayers.map((l) => l.id));
     setAlone({ key: layersKey, layers: start.layers.map((l) => ({ id: l.id, visible: l.visible })), changed: null });
     await setLayersVisible([...on], start.layers.filter((l) => l.visible && !on.has(l.id)).map((l) => l.id));
-    setSaid(`${tableLayers.map((l) => l.name).join(', ')} alone on show`);
+    setSaid(ok(`${tableLayers.map((l) => l.name).join(', ')} alone on show`));
   };
   /** The leaves filter in the view: on, the table's layers are turned on too, so what it keeps is on show. */
   const filterTheView = async (on: boolean) => {
@@ -529,13 +528,12 @@ export function ReservesTable({ tableId, picker, onDeleted }: { tableId: string;
                 </button>
               ) : (
                 <>
-                  <input
+                  <TextInput size="sm"
                     autoFocus
-                    aria-label="The new column's name"
+                    label="The new column's name"
                     placeholder="name, Enter"
-                    className="h-6 rounded-md border border-input bg-input/30 px-1.5 text-xs outline-none"
                     value={adding.name}
-                    onChange={(e) => setAdding({ ...adding, name: e.target.value })}
+                    onChange={(value) => setAdding({ ...adding, name: value })}
                     onKeyDown={(e) => {
                       if (e.key === 'Escape') setAdding(null);
                       if (e.key === 'Enter') void addColumn();
@@ -565,14 +563,14 @@ export function ReservesTable({ tableId, picker, onDeleted }: { tableId: string;
             className={cn('flex shrink-0 items-center gap-1.5', inView ? 'text-primary' : 'text-muted-foreground')}
             title="Draw only the solids on the leaves the filter keeps, on the table's layer, as a layer's filter does. Saved with the project; untick to draw them all again"
           >
-            <Checkbox checked={inView} onCheckedChange={(c) => void filterTheView(c === true)} aria-label="Filter the view too" data-slot="reserves-in-view" />
+            <Check checked={inView} onChange={(c) => void filterTheView(c)} label="Filter the view too" slot="reserves-in-view" />
             Filter the view too
           </label>
           <label
             className={cn('flex shrink-0 items-center gap-1.5', !inView ? 'text-muted-foreground/50' : coalOnly ? 'text-primary' : 'text-muted-foreground')}
             title="Only the coal solids on the leaves kept, by the material the seam cut gave them: a bench's waste isn't drawn. Coal the working sections reject still shows, as its solid is coal"
           >
-            <Checkbox checked={coalOnly} disabled={!inView} onCheckedChange={(c) => setCoalOnly(c === true)} aria-label="Coal solids only" data-slot="reserves-coal-only" />
+            <Check checked={coalOnly} disabled={!inView} onChange={(c) => setCoalOnly(c)} label="Coal solids only" slot="reserves-coal-only" />
             Coal solids only
           </label>
         </div>
@@ -598,7 +596,7 @@ export function ReservesTable({ tableId, picker, onDeleted }: { tableId: string;
           )}
           <Choice value={follow} options={FOLLOWS} labels={FOLLOW_LABELS} onChange={setFollow} label="Follow a solid picked in the view" />
           <span className="ml-auto flex items-center gap-1">
-            {said && <span className="text-ok">{said}</span>}
+            <SaidLine said={said} inline />
             <Button
               variant="outline"
               size="sm"

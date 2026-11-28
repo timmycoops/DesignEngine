@@ -1,9 +1,8 @@
 import { Play } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { formulaReference, type ObjectSummary, objectDetails, scriptCheck } from '@/bridge';
-import { Choice, Field, PanelHead, ScriptEditor, Select } from '@/design-system/kit';
+import { Choice, Field, ok, PanelHead, refused, type Said, SaidLine, ScriptEditor, Select, TextInput } from '@/design-system/kit';
 import { Button } from '@/design-system/ui/button';
-import { Input } from '@/design-system/ui/input';
 import { useWorkspace } from '@/workspace/context';
 import { guideFor, useParameterTables, useProjectScripts, useTableColumns } from './scriptNames';
 import { CopyForAi } from './CopyForAi';
@@ -35,7 +34,7 @@ export function ProjectScriptEditor({ object, onSaved }: { object: ObjectSummary
   const [source, setSource] = useState(object ? '' : STARTER);
   const [loaded, setLoaded] = useState(!object);
   const [problems, setProblems] = useState<{ message: string; line: number | null }[]>([]);
-  const [said, setSaid] = useState<{ error?: string; text?: string }>({});
+  const [said, setSaid] = useState<Said | null>(null);
   const [reference, setReference] = useState('');
   // What's saved, so a table script runs only as saved (decision 0099, workstream 7).
   const [savedSource, setSavedSource] = useState<string | null>(null);
@@ -71,7 +70,7 @@ export function ProjectScriptEditor({ object, onSaved }: { object: ObjectSummary
     const t = setTimeout(() => {
       void scriptCheck(name, source, object?.id ?? null)
         .then((p) => live && setProblems(p))
-        .catch((e) => live && setSaid({ error: String(e) }));
+        .catch((e) => live && setSaid(refused(String(e))));
     }, 200);
     return () => {
       live = false;
@@ -81,9 +80,9 @@ export function ProjectScriptEditor({ object, onSaved }: { object: ObjectSummary
 
   const save = async () => {
     const outcome = await runRecord('script.save', { script: object?.id ?? null, name: name.trim(), source, note });
-    if (outcome.error) return setSaid({ error: outcome.error });
+    if (outcome.error) return setSaid(refused(outcome.error));
     const made = outcome.record?.outputs?.[0]?.id ?? object?.id;
-    setSaid({ text: `${name.trim()} saved: what loads it reads it as it is now` });
+    setSaid(ok(`${name.trim()} saved: what loads it reads it as it is now`));
     setSavedSource(source);
     if (made) onSaved(made);
   };
@@ -91,9 +90,9 @@ export function ProjectScriptEditor({ object, onSaved }: { object: ObjectSummary
   const runTable = async () => {
     if (!object || !on) return;
     const outcome = await runRecord('table.script', on === OBJECTS ? { objects: true, script: object.id } : { table: on, script: object.id, into });
-    if (outcome.error) return setSaid({ error: outcome.error });
+    if (outcome.error) return setSaid(refused(outcome.error));
     const made = outcome.record?.outputs?.[0]?.id ?? on;
-    setSaid({ text: outcome.record?.messages?.join('; ') || 'Ran' });
+    setSaid(ok(outcome.record?.messages?.join('; ') || 'Ran'));
     select(made);
     openPanel('restable');
   };
@@ -103,10 +102,10 @@ export function ProjectScriptEditor({ object, onSaved }: { object: ObjectSummary
       <PanelHead line="Functions written once, loaded by name from any formula or calculated column" more="A dataflow or calculated column that loads this script is bound to it when it is saved; each run names the revision it read." />
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <Field label="Name">
-          <Input className="h-7 w-40 px-1.5 text-xs" value={name} aria-label="The script's name, what a load asks for" onChange={(e) => setName(e.target.value)} />
+          <TextInput className="w-40" value={name} label="The script's name, what a load asks for" onChange={(value) => setName(value)} />
         </Field>
         <Field label="For">
-          <Input className="h-7 w-72 px-1.5 text-xs" value={note} aria-label="What the script is for" placeholder="qualities added up by tonnes" onChange={(e) => setNote(e.target.value)} />
+          <TextInput className="w-72" value={note} label="What the script is for" placeholder="qualities added up by tonnes" onChange={(value) => setNote(value)} />
         </Field>
         <span className="text-muted-foreground">
           load(&quot;{name.trim() || 'name'}&quot;, &quot;function&quot;)
@@ -151,7 +150,7 @@ export function ProjectScriptEditor({ object, onSaved }: { object: ObjectSummary
           ))}
         </div>
       )}
-      {said.error ? <span className="text-destructive">{said.error}</span> : said.text ? <span className="text-ok">{said.text}</span> : null}
+      <SaidLine said={said} inline />
       <details className="shrink-0 text-muted-foreground" data-slot="script-guide">
         <summary className="cursor-pointer">{isTable ? 'How table scripts are written' : 'How formulas and their functions are written'}</summary>
         <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap font-mono text-xs">{guideFor(reference, isTable)}</pre>

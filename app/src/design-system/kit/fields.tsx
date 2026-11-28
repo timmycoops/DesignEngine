@@ -9,13 +9,13 @@ import { Select } from './Select';
  * grid or surface, and a field row to label each. One look and one behaviour wherever they're used.
  */
 
-const boxClass = 'h-7 rounded-md border border-input bg-input/30 text-xs outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50';
+const boxClass = 'h-7 rounded-md border border-input bg-input/30 text-xs outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 disabled:opacity-50';
 
 /**
  * A number with its unit in the box. It takes what parses and is in range as it's typed; anything else it holds as typed,
  * outlined, with why in its tooltip, until it's put right or the box loses focus, which puts the last good value back.
  */
-export function NumberInput({ value, onChange, label, unit, range, width = 'w-20' }: { value: number; onChange: (value: number) => void; label: string; unit?: string; range?: Range; width?: string }) {
+export function NumberInput({ value, onChange, label, unit, range, width = 'w-20', disabled }: { value: number; onChange: (value: number) => void; label: string; unit?: string; range?: Range; width?: string; disabled?: boolean }) {
   const [text, setText] = useState(showNumber(value));
   const [why, setWhy] = useState<string | null>(null);
   useEffect(() => {
@@ -31,6 +31,7 @@ export function NumberInput({ value, onChange, label, unit, range, width = 'w-20
         className={cn(boxClass, 'w-full px-1.5 tabular-nums', unit && 'pr-7', why && 'border-warning ring-1 ring-warning/40')}
         value={text}
         inputMode="decimal"
+        disabled={disabled}
         aria-label={label}
         aria-invalid={why !== null}
         title={why ?? label}
@@ -58,7 +59,7 @@ export function NumberInput({ value, onChange, label, unit, range, width = 'w-20
  * A number that may be left blank, the box saying what blank means ("end", "its own"), or nothing where a number is
  * still to come. Blank gives null; otherwise it reads as `NumberInput` does, holding what won't parse outlined, with why.
  */
-export function NumberOrBlank({ value, onChange, label, unit, range, blank, width = 'w-20' }: { value: number | null; onChange: (value: number | null) => void; label: string; unit?: string; range?: Range; blank: string; width?: string }) {
+export function NumberOrBlank({ value, onChange, label, unit, range, blank, width = 'w-20', disabled }: { value: number | null; onChange: (value: number | null) => void; label: string; unit?: string; range?: Range; blank: string; width?: string; disabled?: boolean }) {
   const show = (v: number | null) => (v === null ? '' : showNumber(v));
   const [text, setText] = useState(show(value));
   const [why, setWhy] = useState<string | null>(null);
@@ -75,6 +76,7 @@ export function NumberOrBlank({ value, onChange, label, unit, range, blank, widt
         className={cn(boxClass, 'w-full px-1.5 tabular-nums', unit && 'pr-7', why && 'border-warning ring-1 ring-warning/40')}
         value={text}
         inputMode="decimal"
+        disabled={disabled}
         placeholder={blank}
         aria-label={label}
         aria-invalid={why !== null}
@@ -211,6 +213,16 @@ export function CellInput({
       onChange={(e) => onChange(e.target.value)}
       {...props}
     />
+  );
+}
+
+/** A label in a line of other things, just before what it labels: Width, m [ 50 ]. */
+export function InlineField({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <span className="inline-flex items-center gap-1 text-muted-foreground">
+      {label}
+      {children}
+    </span>
   );
 }
 

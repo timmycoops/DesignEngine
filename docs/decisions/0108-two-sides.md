@@ -173,6 +173,51 @@ The shell check's stale menu list (no "A table (CSV)…", "Dataflow" for the Res
 | `--workflow` | 38 of 38 |
 | `--select` | 40 of 40 |
 
+## Built: workstream 6, the kit everywhere
+
+The tool panels were on the kit since the UI plan; the rest weren't. Face design had its own number box, small and
+icon buttons, choice, headings, labels and surface list; Properties its own sections, rows, choice, flags, slider and
+boxes; Parameters, the case's parts and the dialogs their own buttons and boxes. What a run said was held five ways
+(`{error, text}`, `{text, refused}`, `{text, tone}`, a bare string and a flag) and drawn in a colour each panel
+picked: the Reserves table's Run again said a refusal in green.
+
+- **New in the kit** (`app/src/design-system/kit/`): `TextInput` (words; `sm` in a row; with no `value` it holds what's
+  typed and is read when it's left), `Check` (a tick, its words beside it, some ticked where some are), `PanelButton`
+  (a button in a panel at the boxes' height, `row` at 24 px), `TextButton` (words as a button: Open, + New script),
+  `Disclosure` (a line that opens what's under it), `InlineField` (Width, m [50] in a line), `SectionHead` (a long
+  panel's part: 1. Lines), `ShownSection`, `ShownRow`, `FlagBadge` and `PercentSlider` (what's shown and not edited, as
+  Properties shows an object), `KitDialog` and `DialogList` (every dialog's one frame). `NumberInput` and
+  `NumberOrBlank` can be turned off; `IconButton` shows when it's off.
+- **One place for what a run said:** a `Said` (`ok` green, `warning` orange, `refused` red, `quiet` muted; `saidOf` a
+  command's reply, `saidOfError` a thrown error), drawn by `SaidLine` beside the button that ran it. Every panel that
+  said something its own way does it so now: Parameters, the case, its Setup, its units table, Run on the top row, the
+  cases' forms, a row dataflow, the Objects and Reserves tables, calculated columns, Update records, project scripts,
+  Copy for AI, the workflow and its canvas, and Properties' Under. A run's notes stay `RunResult`'s.
+- **Face design on the kit:** its number boxes are `NumberOrBlank` (blank holds the number it had, as before; the
+  berm's least bench left blank is off), with the kit's range check outlining what won't parse; its Choice, buttons,
+  headings, labels and tick boxes are the kit's; its lists of surfaces are `TargetOptions`, grids and surfaces under
+  their headings.
+- **Properties on the kit**, with a head line (what's picked: name, look, measures, history). Under (keep selected the
+  solids under a volume) is a `NumberInput` in m³ that won't take nought or less.
+- **Parameters, the case parts and the dialogs on the kit:** the Repair, Export solids and Deswik or Spry import dialogs
+  are `KitDialog`; Parameters' bars are `PanelButton`s and its links `TextButton`s; Setup's, the units table's and the
+  case's open-close lines are `Disclosure`s.
+- **Every box and tick in the panels is the kit's:** shadcn's 47 boxes and 18 ticks, and the plain boxes and ticks, are
+  `TextInput` and `Check`. Left plain, and said why: the file pickers (Bench rules, Update records), the layer's colour
+  and the Run log's tick, where a shift-click ticks the runs between.
+- **Panel heads where missing:** Layers ("Tick to show; right-click for more"), Properties and the Run log. The Tables
+  panel's head stays its bar, the table picked first.
+- **Kept so it stays:** `app/tests/kitEverywhere.test.mjs` fails a panel with a shadcn box or tick, a plain box, a
+  system select, a look-alike of a kit part, a dialog frame of its own, or a said line in a colour of its own.
+
+| Check | Result |
+|---|---|
+| `pnpm test` | 210 pass, 5 new (`tests/kitEverywhere.test.mjs`): no panel off the kit, as above; a reply refused in red and done in green, a thrown error refused, each tone in its token |
+| `--shell`, release build from this branch, 16 Nov demo | 70 of 70, every check counted, 1 new: Layers, Properties and the Run log say what they're for in a 28 px line that fits, their first control within 40 px of the tab |
+| `--case` | 68 of 71: the said lines the bench reads (`case-said`, `case-run-said`, `cases-said`, `setup-said`) say as they did. The 3 left fail the same on main, from the used demo |
+| `--workflow` | 54 of 54, every check counted |
+| `--select` | 46 of 46, every check counted |
+
 ## Known limits
 
 - **The section's labels and the overview** keep their dark plate with white words in both looks, so they read over

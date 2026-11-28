@@ -1,8 +1,7 @@
 import { Check } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { concealed, type ObjectSummary } from '@/bridge';
-import { Input } from '@/design-system/ui/input';
-import { type Asker, AskSteps, Choice, Field, NumberInput, NumberOrBlank, resultParams, type RunReport, type ToolAction, ToolPanel, ToolSection, useAsking, useResultAs } from '@/design-system/kit';
+import { type Asker, AskSteps, Choice, Field, NumberInput, NumberOrBlank, resultParams, type RunReport, TextInput, type ToolAction, ToolPanel, ToolSection, useAsking, useResultAs } from '@/design-system/kit';
 import { nearestString } from './stringSide';
 import { choiceWords } from '@/tools';
 import { useWorkspace } from '@/workspace/context';
@@ -329,10 +328,10 @@ export function SurfacesPanel() {
             <NumberInput value={longest} onChange={setLongest} label="Longest hull edge" unit="m" range={{ min: 0, minIncluded: false }} />
           </Field>
           <Field label="Name">
-            <Input className="h-7 px-1.5 text-xs" value={tinName} placeholder={toTriangulate.length === 1 ? `${toTriangulate[0].name} surface` : 'Triangulated'} aria-label="Name for the surface" onChange={(e) => setTinName(e.target.value)} />
+            <TextInput value={tinName} placeholder={toTriangulate.length === 1 ? `${toTriangulate[0].name} surface` : 'Triangulated'} label="Name for the surface" onChange={(value) => setTinName(value)} />
           </Field>
           <Field label="Layer">
-            <Input className="h-7 px-1.5 text-xs" value={tinLayer} aria-label="Layer for the surface" onChange={(e) => setTinLayer(e.target.value)} />
+            <TextInput value={tinLayer} label="Layer for the surface" onChange={(value) => setTinLayer(value)} />
           </Field>
         </ToolSection>
       )}
@@ -380,10 +379,10 @@ export function SurfacesPanel() {
             </Field>
           )}
           <Field label="Name">
-            <Input className="h-7 px-1.5 text-xs" value={mergeName} placeholder={keep === 'bottom' ? 'Merged bottom' : 'Merged top'} aria-label="Name for what's merged" onChange={(e) => setMergeName(e.target.value)} />
+            <TextInput value={mergeName} placeholder={keep === 'bottom' ? 'Merged bottom' : 'Merged top'} label="Name for what's merged" onChange={(value) => setMergeName(value)} />
           </Field>
           <Field label="Layer">
-            <Input className="h-7 px-1.5 text-xs" value={mergeLayer} aria-label="Layer for what's merged" onChange={(e) => setMergeLayer(e.target.value)} />
+            <TextInput value={mergeLayer} label="Layer for what's merged" onChange={(value) => setMergeLayer(value)} />
           </Field>
         </ToolSection>
       )}
@@ -397,7 +396,7 @@ export function SurfacesPanel() {
         </Field>
         {thickness === 'on' && (
           <Field label="Grid layer">
-            <Input className="h-7 px-1.5 text-xs" value={thicknessLayer} aria-label="Layer for the thickness grid" onChange={(e) => setThicknessLayer(e.target.value)} />
+            <TextInput value={thicknessLayer} label="Layer for the thickness grid" onChange={(value) => setThicknessLayer(value)} />
           </Field>
         )}
       </ToolSection>}

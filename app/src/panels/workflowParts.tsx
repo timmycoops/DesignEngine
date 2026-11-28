@@ -6,8 +6,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ObjectSummary, Workflow, WorkflowStep } from '@/bridge';
 import { objectDetails } from '@/bridge';
-import { Input } from '@/design-system/ui/input';
-import { StatusBadge } from '@/design-system/kit';
+import { StatusBadge, TextInput } from '@/design-system/kit';
 import { useWorkspace } from '@/workspace/context';
 import { fmt } from './format';
 import { BASE, type SettingRow } from './workflow';
@@ -85,12 +84,13 @@ export function StepSettings({ rows, hidden, caseName, revision, valueOf, set }:
               <span className="truncate" title={`${row.command}: ${row.field}`}>
                 {row.field}
               </span>
-              <Input
+              <TextInput
+                size="sm"
                 key={`${revision}:${caseName}:${shown}`}
-                className={`h-6 px-1 text-xs ${inCase && own !== undefined ? 'text-edited' : ''}`}
+                className={inCase && own !== undefined ? 'text-edited' : undefined}
                 defaultValue={shown}
                 placeholder={inCase ? String(row.base) : ''}
-                aria-label={`${caseName}: step ${row.position} ${row.field}`}
+                label={`${caseName}: step ${row.position} ${row.field}`}
                 title={inCase && own === undefined ? 'As Base' : undefined}
                 onBlur={(e) => e.target.value !== shown && set(row, e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}

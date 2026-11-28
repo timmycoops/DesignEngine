@@ -1,4 +1,4 @@
-import { Dialog } from 'radix-ui';
+import { DialogList, KitDialog } from '../design-system/kit';
 import { Button } from '../design-system/ui/button';
 
 /** A mesh an import kept as a surface, closed or a block with holes, and why it couldn't be a solid. */
@@ -34,45 +34,38 @@ export function RepairDialog({ meshes, onLeave, onFix }: { meshes: NotASolid[] |
   const n = meshes?.length ?? 0;
 
   return (
-    <Dialog.Root open={meshes !== null} onOpenChange={(open) => !open && onLeave()}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/50" />
-        <Dialog.Content className="fixed top-1/2 left-1/2 z-50 flex max-h-[85vh] w-[min(720px,92vw)] -translate-x-1/2 -translate-y-1/2 flex-col gap-3 rounded-lg border bg-card p-4 text-sm shadow-lg">
-          <div>
-            <Dialog.Title className="font-semibold">
-              {n === 1 ? '1 mesh' : `${n.toLocaleString()} meshes`} couldn't be made solids
-            </Dialog.Title>
-            <Dialog.Description className="text-xs text-muted-foreground">
-              They came in as surfaces, flagged not_a_solid with why. Repair takes fins off, joins cracks, fills holes up to 10 % of the surface and rebuilds
-              crossings to the solid each encloses, checked against the original. Each one fixed replaces its surface, keeping its name, layer and attributes;
-              undo brings the surfaces back.
-            </Dialog.Description>
+    <KitDialog
+      open={meshes !== null}
+      onClose={onLeave}
+      width={720}
+      title={`${n === 1 ? '1 mesh' : `${n.toLocaleString()} meshes`} couldn't be made solids`}
+      line="They came in as surfaces, flagged not_a_solid with why. Repair takes fins off, joins cracks, fills holes up to 10 % of the surface and rebuilds crossings to the solid each encloses, checked against the original. Each one fixed replaces its surface, keeping its name, layer and attributes; undo brings the surfaces back."
+      foot={
+        <>
+          <Button variant="ghost" size="sm" onClick={onLeave}>
+            Leave as surfaces
+          </Button>
+          <Button size="sm" autoFocus onClick={() => onFix((meshes ?? []).map((m) => m.id))}>
+            Fix {n === 1 ? 'it' : 'them'}
+          </Button>
+        </>
+      }
+    >
+      <ul className="list-disc pl-5">
+        {[...counts].map(([what, count]) => (
+          <li key={what}>
+            {count.toLocaleString()} {what}
+          </li>
+        ))}
+      </ul>
+      <DialogList>
+        {(meshes ?? []).slice(0, LISTED).map((m) => (
+          <div key={m.id} className="truncate px-2 py-0.5" title={m.why}>
+            {m.name}: <span className="text-muted-foreground">{m.why}</span>
           </div>
-          <ul className="list-disc pl-5">
-            {[...counts].map(([what, count]) => (
-              <li key={what}>
-                {count.toLocaleString()} {what}
-              </li>
-            ))}
-          </ul>
-          <div className="min-h-0 flex-1 overflow-auto rounded border text-xs">
-            {(meshes ?? []).slice(0, LISTED).map((m) => (
-              <div key={m.id} className="truncate px-2 py-0.5" title={m.why}>
-                {m.name}: <span className="text-muted-foreground">{m.why}</span>
-              </div>
-            ))}
-            {n > LISTED && <div className="px-2 py-0.5 text-muted-foreground">and {(n - LISTED).toLocaleString()} more</div>}
-          </div>
-          <div className="flex justify-end gap-2">
-            <Button variant="ghost" size="sm" onClick={onLeave}>
-              Leave as surfaces
-            </Button>
-            <Button size="sm" autoFocus onClick={() => onFix((meshes ?? []).map((m) => m.id))}>
-              Fix {n === 1 ? 'it' : 'them'}
-            </Button>
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+        ))}
+        {n > LISTED && <div className="px-2 py-0.5 text-muted-foreground">and {(n - LISTED).toLocaleString()} more</div>}
+      </DialogList>
+    </KitDialog>
   );
 }

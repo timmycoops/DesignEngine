@@ -117,6 +117,19 @@ the prompt opens, and the project as it stands when the click lands. Clip, Trim,
 a new tool that takes inputs asks the same way. Colours come from the theme's tokens, light and dark alike, one meaning each: gold picked, orange `warning`, blue `edited`,
 red refused, green valid. Don't hand-roll an input, select, badge or colour a kit part covers; add to the kit instead.
 
+Since 0108 workstream 6 every panel and dialog is on the kit, not only the tool panels, and `app/tests/kitEverywhere.test.mjs`
+fails a panel that isn't: no shadcn `Input` or `Checkbox`, no plain `<input>` but a file, colour or range, no system
+`<select>`, no look-alike of a kit part of its own (`NumberBox`, `SmallButton`, `Choice`, `Section`, `Field`…), no
+`Dialog.Root` of its own. The parts it added: `TextInput` (words, `sm` for a row; with no `value` it holds what's typed
+till it's left), `Check` (a tick, its words beside it as children), `PanelButton` (a button in a panel, `row` at 24 px),
+`TextButton` (words as a button: Open, + Add a step), `Disclosure` (▸ a line that opens what's under it),
+`InlineField` (Width, m [50] in a line), `SectionHead` (1. Lines, a long panel's part), `ShownSection`, `ShownRow`,
+`FlagBadge` and `PercentSlider` (what a panel shows and doesn't edit, as Properties), and `KitDialog` with `DialogList`
+(every dialog's frame: title, a line, buttons at the foot). **What a run, save or edit did is said one way**: a `Said`
+(`ok`, `warning`, `refused`, `quiet`, or `saidOf(reply)`), drawn by `SaidLine`, beside the button, never a colour a
+panel picks; a run's notes are `RunResult`'s. Every panel has its head line, Layers, Properties and the Run log
+included; the Tables panel's head is its bar, the table picked first.
+
 
 ## Hidden objects and how they look
 

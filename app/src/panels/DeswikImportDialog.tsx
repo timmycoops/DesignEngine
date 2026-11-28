@@ -1,9 +1,6 @@
 import { useMemo, useState } from 'react';
-import { Dialog } from 'radix-ui';
 import { Button } from '../design-system/ui/button';
-import { Checkbox } from '../design-system/ui/checkbox';
-import { Input } from '../design-system/ui/input';
-import { Select } from '../design-system/kit';
+import { Check, DialogList, KitDialog, Select, TextInput } from '../design-system/kit';
 
 export type MeshesAs = 'auto' | 'solids' | 'surfaces' | 'none';
 
@@ -93,84 +90,76 @@ export function DeswikImportDialog({
   const fileName = file?.path.split(/[\\/]/).pop() ?? '';
 
   return (
-    <Dialog.Root open={file !== null} onOpenChange={(open) => !open && close()}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/50" />
-        <Dialog.Content className="fixed top-1/2 left-1/2 z-50 flex max-h-[85vh] w-[min(960px,92vw)] -translate-x-1/2 -translate-y-1/2 flex-col gap-3 rounded-lg border bg-card p-4 text-sm shadow-lg">
-          <div>
-            <Dialog.Title className="font-semibold">
-              Import from {source.from}: {fileName}
-            </Dialog.Title>
-            <Dialog.Description className="text-xs text-muted-foreground">{source.description}</Dialog.Description>
-          </div>
-          <div className="flex items-center gap-2">
-            <Input placeholder={source.placeholder} value={filter} onChange={(e) => setFilter(e.target.value)} autoFocus />
-            <Button variant="outline" size="sm" onClick={() => choose(shown.map((l) => l.name), true)}>
-              Tick shown
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => choose(shown.map((l) => l.name), false)}>
-              Untick shown
-            </Button>
-          </div>
-          <div className="min-h-0 flex-1 overflow-auto rounded border">
-            {shown.map((l) => {
-              const cut = l.name.lastIndexOf('\\');
-              return (
-                <label key={l.name} className="flex cursor-pointer items-center gap-2 px-2 py-0.5 hover:bg-muted/50">
-                  <Checkbox checked={chosen.has(l.name)} onCheckedChange={(on) => toggle(l.name, on === true)} />
-                  <span className="min-w-0 flex-1 truncate" title={l.name}>
-                    <span className="text-muted-foreground">{l.name.slice(0, cut + 1)}</span>
-                    {l.name.slice(cut + 1)}
-                  </span>
-                  {l.detail && <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{l.detail}</span>}
-                  <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{size(l.bytes)}</span>
-                </label>
-              );
-            })}
-            {shown.length === 0 && <div className="p-2 text-muted-foreground">No layer matches.</div>}
-          </div>
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-            <label className="flex items-center gap-1.5">
-              Meshes
-              <Select value={meshes} onChange={(e) => setMeshes(e.target.value as MeshesAs)}>
-                <option value="auto">closed ones solids, open ones surfaces</option>
-                <option value="solids">all solids</option>
-                <option value="surfaces">all surfaces</option>
-                <option value="none">none: strings only</option>
-              </Select>
+    <KitDialog
+      open={file !== null}
+      onClose={close}
+      width={960}
+      title={`Import from ${source.from}: ${fileName}`}
+      line={source.description}
+      aside={`${picked.length} of ${file?.layers.length ?? 0} layers ticked, ${size(picked.reduce((sum, l) => sum + l.bytes, 0))}`}
+      foot={
+        <>
+          <Button variant="ghost" size="sm" onClick={close}>
+            Cancel
+          </Button>
+          <Button
+            size="sm"
+            disabled={picked.length === 0}
+            onClick={() => {
+              onImport({ layers: picked.map((l) => l.name), meshes, repair, layer: layer.trim() });
+              setChosen(new Set());
+              setFilter('');
+            }}
+          >
+            Import {picked.length === 1 ? '1 layer' : `${picked.length} layers`}
+          </Button>
+        </>
+      }
+    >
+      <div className="flex items-center gap-2">
+        <TextInput className="flex-1" label="Filter the layers" placeholder={source.placeholder} value={filter} onChange={setFilter} autoFocus />
+        <Button variant="outline" size="sm" onClick={() => choose(shown.map((l) => l.name), true)}>
+          Tick shown
+        </Button>
+        <Button variant="outline" size="sm" onClick={() => choose(shown.map((l) => l.name), false)}>
+          Untick shown
+        </Button>
+      </div>
+      <DialogList className="text-sm">
+        {shown.map((l) => {
+          const cut = l.name.lastIndexOf('\\');
+          return (
+            <label key={l.name} className="flex cursor-pointer items-center gap-2 px-2 py-0.5 hover:bg-muted/50">
+              <Check checked={chosen.has(l.name)} label={`Import ${l.name}`} onChange={(on) => toggle(l.name, on)} />
+              <span className="min-w-0 flex-1 truncate" title={l.name}>
+                <span className="text-muted-foreground">{l.name.slice(0, cut + 1)}</span>
+                {l.name.slice(cut + 1)}
+              </span>
+              {l.detail && <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{l.detail}</span>}
+              <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{size(l.bytes)}</span>
             </label>
-            <label className="flex items-center gap-1.5" title="Sheets and fins off, cracks joined, holes up to 10 % filled">
-              <Checkbox checked={repair} onCheckedChange={(on) => setRepair(on === true)} />
-              Repair solids
-            </label>
-            <label className="flex items-center gap-1.5">
-              One layer for all
-              <Input className="h-7 w-48" placeholder={`blank: as in ${source.from}`} value={layer} onChange={(e) => setLayer(e.target.value)} />
-            </label>
-          </div>
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-xs text-muted-foreground">
-              {picked.length} of {file?.layers.length ?? 0} layers ticked, {size(picked.reduce((sum, l) => sum + l.bytes, 0))}
-            </span>
-            <div className="flex gap-2">
-              <Button variant="ghost" size="sm" onClick={close}>
-                Cancel
-              </Button>
-              <Button
-                size="sm"
-                disabled={picked.length === 0}
-                onClick={() => {
-                  onImport({ layers: picked.map((l) => l.name), meshes, repair, layer: layer.trim() });
-                  setChosen(new Set());
-                  setFilter('');
-                }}
-              >
-                Import {picked.length === 1 ? '1 layer' : `${picked.length} layers`}
-              </Button>
-            </div>
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+          );
+        })}
+        {shown.length === 0 && <div className="p-2 text-muted-foreground">No layer matches.</div>}
+      </DialogList>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <label className="flex items-center gap-1.5">
+          Meshes
+          <Select value={meshes} onChange={(e) => setMeshes(e.target.value as MeshesAs)}>
+            <option value="auto">closed ones solids, open ones surfaces</option>
+            <option value="solids">all solids</option>
+            <option value="surfaces">all surfaces</option>
+            <option value="none">none: strings only</option>
+          </Select>
+        </label>
+        <Check checked={repair} label="Repair solids" title="Sheets and fins off, cracks joined, holes up to 10 % filled" onChange={setRepair}>
+          Repair solids
+        </Check>
+        <label className="flex items-center gap-1.5">
+          One layer for all
+          <TextInput className="w-48" label="One layer for everything" placeholder={`blank: as in ${source.from}`} value={layer} onChange={setLayer} />
+        </label>
+      </div>
+    </KitDialog>
   );
 }

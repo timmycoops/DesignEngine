@@ -1,9 +1,8 @@
 import { Play, Trash2, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { type CalcAddUp, type CalcCheck, type CalculatedColumn, calcCheck, calcParameters, calcTrace, type FormulaTrace } from '@/bridge';
-import { Choice, Field, ScriptEditor, Select } from '@/design-system/kit';
+import { Choice, Field, refused, type Said, SaidLine, ScriptEditor, Select, TextInput } from '@/design-system/kit';
 import { Button } from '@/design-system/ui/button';
-import { Input } from '@/design-system/ui/input';
 import { cn } from 'cn';
 import { useWorkspace } from '@/workspace/context';
 import { formulaNames, useParameterTables, useProjectScripts } from './scriptNames';
@@ -52,7 +51,7 @@ export function CalculatedEditor({
   const [parameters, setParameters] = useState<string[]>(editing?.parameters ?? []);
   const [check, setCheck] = useState<CalcCheck | null>(null);
   const [trace, setTrace] = useState<FormulaTrace | null>(null);
-  const [said, setSaid] = useState<{ error?: string; text?: string }>({});
+  const [said, setSaid] = useState<Said | null>(null);
 
   useEffect(() => {
     // A new column reads the parameter tables its table's dataflow reads.
@@ -67,7 +66,7 @@ export function CalculatedEditor({
     const t = setTimeout(() => {
       void calcCheck(table, column)
         .then((c) => live && setCheck(c))
-        .catch((e) => live && setSaid({ error: String(e) }));
+        .catch((e) => live && setSaid(refused(String(e))));
     }, 200);
     return () => {
       live = false;
@@ -76,19 +75,19 @@ export function CalculatedEditor({
   }, [table, column]);
 
   const run = async () => {
-    if (!picked) return setSaid({ error: table ? 'Pick a leaf in the grid to run the formula on it' : 'Pick a solid in the grid to run the formula on it' });
+    if (!picked) return setSaid(refused(table ? 'Pick a leaf in the grid to run the formula on it' : 'Pick a solid in the grid to run the formula on it'));
     try {
       setTrace(await calcTrace(table, column, picked.row, picked.label, picked.solid ?? null));
-      setSaid({});
+      setSaid(null);
     } catch (e) {
       setTrace(null);
-      setSaid({ error: String(e) });
+      setSaid(refused(String(e)));
     }
   };
   const save = async () => {
     const replaces = editing && editing.name !== column.name ? editing.name : null;
     const outcome = await runRecord('table.calculate', table ? { table, column, replaces } : { objects: true, column, replaces });
-    if (outcome.error) return setSaid({ error: outcome.error });
+    if (outcome.error) return setSaid(refused(outcome.error));
     onClose();
   };
   const remove = async () => {
@@ -97,7 +96,7 @@ export function CalculatedEditor({
     const holder = table ?? summary?.objects.find((o) => o.objects_own)?.id;
     if (!holder) return;
     const outcome = await runRecord('table.remove_column', { table: holder, column: editing.name });
-    if (outcome.error) return setSaid({ error: outcome.error });
+    if (outcome.error) return setSaid(refused(outcome.error));
     onClose();
   };
 
@@ -107,10 +106,10 @@ export function CalculatedEditor({
     <div className="flex min-h-0 flex-col gap-2 border-b border-border bg-muted/20 p-2" data-slot="calculated-editor">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <Field label="Column">
-          <Input className="h-7 w-40 px-1.5 text-xs" value={name} aria-label="The calculated column's name" onChange={(e) => setName(e.target.value)} />
+          <TextInput className="w-40" value={name} label="The calculated column's name" onChange={(value) => setName(value)} />
         </Field>
         <Field label="Unit">
-          <Input className="h-7 w-20 px-1.5 text-xs" value={unit} aria-label="Its unit" placeholder="m3/t" onChange={(e) => setUnit(e.target.value)} />
+          <TextInput className="w-20" value={unit} label="Its unit" placeholder="m3/t" onChange={(value) => setUnit(value)} />
         </Field>
         <Field label="A group">
           <Choice value={by} options={BYS} labels={BY_LABELS} onChange={setBy} label="How a group adds it up: worked again on the group's own inputs (a ratio's way), or each row's value summed, the largest, the smallest, or weighted by a column" />
@@ -162,7 +161,7 @@ export function CalculatedEditor({
         </Button>
         {parameters.length > 0 && <span className="text-muted-foreground">p reads {parameters.length} parameter table{parameters.length === 1 ? '' : 's'}</span>}
         <span className="ml-auto flex items-center gap-1">
-          {said.error ? <span className="text-destructive">{said.error}</span> : said.text ? <span className="text-ok">{said.text}</span> : null}
+          <SaidLine said={said} inline />
           {editing && (
             <Button variant="outline" size="sm" className="h-6 px-2 text-xs" onClick={() => void remove()} title="Take this calculated column off the table (one undo puts it back)">
               <Trash2 className="size-3.5" /> Take it out

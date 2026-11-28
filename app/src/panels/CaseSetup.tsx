@@ -1,7 +1,7 @@
-import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, X } from 'lucide-react';
 import { type ReactNode, useEffect, useState } from 'react';
 import { type FieldSource, type SetupView, type TableSetup, tableSetupView } from '@/bridge';
-import { CellInput, FilterInput, IconButton, Select } from '@/design-system/kit';
+import { CellInput, Disclosure, FilterInput, IconButton, ok, refused, type Said, SaidLine, Select, TextButton } from '@/design-system/kit';
 import { Button } from '@/design-system/ui/button';
 import { cn } from 'cn';
 import { useWorkspace } from '@/workspace/context';
@@ -23,7 +23,7 @@ export function CaseSetup({ table, onDone }: { table: string; onDone: () => void
   const { summary, runRecord, openTool } = useWorkspace();
   const [view, setView] = useState<SetupView | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [said, setSaid] = useState<{ text: string; refused: boolean } | null>(null);
+  const [said, setSaid] = useState<Said | null>(null);
   // Anything it names may change its view: the table, its dataflows, its parameter tables, a layer's blocks.
   const changed = (summary?.objects ?? []).map((o) => `${o.id}:${o.revision}`).join(',');
   useEffect(() => {
@@ -43,8 +43,8 @@ export function CaseSetup({ table, onDone }: { table: string; onDone: () => void
     const reply = await runRecord('table.setup', { table: view.table.id, setup: next });
     setSaid(
       reply.error
-        ? { text: reply.error, refused: true }
-        : { text: `${what}: saved as ${view.table.name}'s next revision. The case is out of date until it's run from Run.`, refused: false },
+        ? refused(reply.error)
+        : ok(`${what}: saved as ${view.table.name}'s next revision. The case is out of date until it's run from Run.`),
     );
   };
 
@@ -61,11 +61,7 @@ export function CaseSetup({ table, onDone }: { table: string; onDone: () => void
       {(view && !view.held) || said || error ? (
         <div className="shrink-0 space-y-0.5 border-b border-border px-3 py-1">
           {view && !view.held && <div className="text-warning">From the run that made it: saved as the table's own on the first change.</div>}
-          {said && (
-            <div className={said.refused ? 'text-destructive' : 'text-muted-foreground'} data-slot="setup-said">
-              {said.text}
-            </div>
-          )}
+          <SaidLine said={said} slot="setup-said" />
           {error && <div className="text-destructive">{error}</div>}
         </div>
       ) : null}
@@ -102,7 +98,7 @@ function RowDataflows({ view, save }: { view: SetupView; save: Save }) {
   const rows = view.setup.row_dataflows ?? [];
   const nameOf = (id: string) => (summary?.objects ?? []).find((o) => o.id === id)?.name ?? 'a dataflow since deleted';
   return (
-    <Section n={3} title="Dataflows after it, in run order" line="Dataflows run on the table's rows after the reserves run, each on the rows its filter picks; taken out, its columns stay on the table." slot="setup-row-dataflows">
+    <SetupPart n={3} title="Dataflows after it, in run order" line="Dataflows run on the table's rows after the reserves run, each on the rows its filter picks; taken out, its columns stay on the table." slot="setup-row-dataflows">
       {rows.length === 0 && <div className="text-muted-foreground">None: Add a dataflow, beside the cases, puts one here.</div>}
       <Ordered
         items={rows}
@@ -128,14 +124,14 @@ function RowDataflows({ view, save }: { view: SetupView; save: Save }) {
           </span>
         )}
       />
-    </Section>
+    </SetupPart>
   );
 }
 
 type Save = (edit: (s: TableSetup) => void, what: string) => Promise<void>;
 
 /** A section of the setup: numbered in the order a run uses it, with a line saying what it decides (decision 3). */
-function Section({ n, title, line, children, slot }: { n: number; title: string; line: string; children: ReactNode; slot: string }) {
+function SetupPart({ n, title, line, children, slot }: { n: number; title: string; line: string; children: ReactNode; slot: string }) {
   return (
     <section className="min-w-0 space-y-1" data-slot={slot} data-section={n}>
       <div className="flex items-baseline gap-2 border-b border-border/60 pb-0.5">
@@ -156,10 +152,9 @@ function Names({ names, noun, lead }: { names: string[]; noun: string; lead: str
   if (!foldsNames(names.length)) return <span>{`${lead} ${names.join(', ')}`}</span>;
   return (
     <span data-slot="setup-names" data-count={names.length}>
-      <button type="button" className="inline-flex items-center gap-0.5 hover:text-foreground" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
-        {open ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
+      <Disclosure open={open} onToggle={() => setOpen((o) => !o)} className="text-inherit">
         {lead} {countWords(names.length, noun)}
-      </button>
+      </Disclosure>
       {open && (
         <span className="mt-0.5 block columns-[12rem] gap-x-4" data-slot="setup-names-open">
           {names.map((n) => (
@@ -240,7 +235,7 @@ function RunOn({ view, save }: { view: SetupView; save: Save }) {
   const [newAttribute, setNewAttribute] = useState('');
   const fromTable = !!view.setup.input;
   return (
-    <Section n={1} title="Blocks it runs on" line="Which block solids fill the case, and the seam order they're read in. A block added to a picked layer is taken up at the next run." slot="setup-run-on">
+    <SetupPart n={1} title="Blocks it runs on" line="Which block solids fill the case, and the seam order they're read in. A block added to a picked layer is taken up at the next run." slot="setup-run-on">
       <div className="flex items-center gap-2">
         <Select
           className="h-6 w-56"
@@ -317,9 +312,7 @@ function RunOn({ view, save }: { view: SetupView; save: Save }) {
       ) : (
         <div>
           The {b.named} blocks named.{' '}
-          <button
-            type="button"
-            className="text-primary hover:underline"
+          <TextButton tone="primary"
             title="Take every solid on these blocks' layers, so a block added to one is taken up"
             onClick={() =>
               void save((s) => {
@@ -327,10 +320,9 @@ function RunOn({ view, save }: { view: SetupView; save: Save }) {
                 const on = [...new Set((summary?.objects ?? []).filter((o) => ids.includes(o.id)).map((o) => o.layer))];
                 s.blocks = { layers: on };
               }, 'Picked by their layers')
-            }
-          >
+            }>
             Pick by their layers instead
-          </button>
+          </TextButton>
         </div>
       )}
       {!fromTable && (
@@ -360,7 +352,7 @@ function RunOn({ view, save }: { view: SetupView; save: Save }) {
         </Select>
       </div>
       {view.own_rows > 0 && <div className="text-muted-foreground">{view.own_rows} rows of its own, read before every table.</div>}
-    </Section>
+    </SetupPart>
   );
 }
 
@@ -440,15 +432,15 @@ function InputMapping({ view, tables, save }: { view: SetupView; tables: { id: s
 
 function Dataflows({ view, save }: { view: SetupView; save: Save }) {
   const ownNote = view.own_add_ons ? (
-    <button type="button" className="text-primary hover:underline" onClick={() => void save((s) => delete s.add_ons, "The dataflow's add-ons")}>
+    <TextButton tone="primary" onClick={() => void save((s) => delete s.add_ons, "The dataflow's add-ons")}>
       Use the dataflow's add-ons
-    </button>
+    </TextButton>
   ) : (
     <span className="text-muted-foreground">The dataflow's add-ons; a change makes them the table's own.</span>
   );
   const setAddOns = (next: string[], what: string) => void save((s) => (s.add_ons = next), what);
   return (
-    <Section n={2} title="The dataflow and its add-ons" line="The steps that work each block column: the main dataflow's, then each add-on's at its stage." slot="setup-dataflows">
+    <SetupPart n={2} title="The dataflow and its add-ons" line="The steps that work each block column: the main dataflow's, then each add-on's at its stage." slot="setup-dataflows">
       <div className="flex items-center gap-2">
         <span className="text-muted-foreground">Main</span>
         <Select className="h-6 w-56" aria-label="Main dataflow" value={view.dataflow.id} onChange={(e) => void save((s) => (s.dataflow = e.target.value), 'Dataflow')}>
@@ -476,7 +468,7 @@ function Dataflows({ view, save }: { view: SetupView; save: Save }) {
         <AddFrom label="+ Add an add-on" choices={view.add_on_choices.filter((c) => !view.add_ons.some((a) => a.id === c.id))} onAdd={(id) => setAddOns([...view.add_ons.map((a) => a.id), id], 'Add-on added')} />
         {ownNote}
       </div>
-    </Section>
+    </SetupPart>
   );
 }
 
@@ -506,7 +498,7 @@ function ParameterTables({ view, save, open }: { view: SetupView; save: Save; op
     </div>
   );
   return (
-    <Section n={4} title="Settings tables, in the order read" line="Where the steps' settings come from: each value from the first table that gives it. A name opens its table in the Parameters tab." slot="setup-tables">
+    <SetupPart n={4} title="Settings tables, in the order read" line="Where the steps' settings come from: each value from the first table that gives it. A name opens its table in the Parameters tab." slot="setup-tables">
       <div className="text-muted-foreground">Read in this order, each value from the first that gives it{view.own_rows > 0 ? ', after the rows of its own' : ''}:</div>
       <Ordered items={listed} label={(t) => t.name} render={row} onChange={(next) => setTables(next.map((t) => t.id), 'Parameter tables')} />
       {after.length > 0 && (
@@ -522,9 +514,9 @@ function ParameterTables({ view, save, open }: { view: SetupView; save: Save; op
       <div className="flex flex-wrap items-center gap-2">
         <AddFrom label="+ Add a table" choices={all.filter((o) => !listed.some((t) => t.id === o.id))} onAdd={(id) => setTables([...listed.map((t) => t.id), id], 'Table added')} />
         {view.own_tables ? (
-          <button type="button" className="text-primary hover:underline" onClick={() => void save((s) => delete s.tables, "The dataflow's tables")}>
+          <TextButton tone="primary" onClick={() => void save((s) => delete s.tables, "The dataflow's tables")}>
             Use the dataflow's tables
-          </button>
+          </TextButton>
         ) : (
           <span className="text-muted-foreground">The dataflow's tables; a change makes them the table's own.</span>
         )}
@@ -534,7 +526,7 @@ function ParameterTables({ view, save, open }: { view: SetupView; save: Save; op
           <Names names={view.looked_up.map((t) => t.name)} noun="table" lead="Looked up by name in its scripts:" />
         </div>
       )}
-    </Section>
+    </SetupPart>
   );
 }
 
@@ -542,7 +534,7 @@ function Steps({ view, edit }: { view: SetupView; edit: (flow: string, step: str
   const flowId = (from: string) => (from === view.dataflow.name ? view.dataflow.id : view.add_ons.find((a) => a.name === from)?.id);
   const scripts = view.steps.filter((s) => s.kind === 'table script');
   return (
-    <Section n={5} title="Steps, in the order run" line="Every step the case runs, from the dataflow and its add-ons. A formula opens in the Parameters tab to edit." slot="setup-steps">
+    <SetupPart n={5} title="Steps, in the order run" line="Every step the case runs, from the dataflow and its add-ons. A formula opens in the Parameters tab to edit." slot="setup-steps">
       <ol className="space-y-0.5">
         {view.steps.map((s, i) => {
           const id = flowId(s.from);
@@ -551,9 +543,9 @@ function Steps({ view, edit }: { view: SetupView; edit: (flow: string, step: str
             <li key={s.step} className={cn('flex gap-1', !s.on && 'text-muted-foreground line-through')} data-step={s.step}>
               <span className="w-4 shrink-0 text-right text-muted-foreground tabular-nums">{i + 1}</span>
               {editable ? (
-                <button type="button" className="hover:underline" title={`Edit ${s.step} in the Parameters tab`} onClick={() => edit(id, s.step)}>
+                <TextButton tone="plain" title={`Edit ${s.step} in the Parameters tab`} onClick={() => edit(id, s.step)}>
                   {s.step}
-                </button>
+                </TextButton>
               ) : (
                 <span>{s.step}</span>
               )}
@@ -571,7 +563,7 @@ function Steps({ view, edit }: { view: SetupView; edit: (flow: string, step: str
           {view.calculated.length > 0 && <Names names={view.calculated} noun="column" lead="Calculated columns:" />}
         </div>
       )}
-    </Section>
+    </SetupPart>
   );
 }
 
@@ -613,17 +605,16 @@ function Fields({ view, save }: { view: SetupView; save: Save }) {
     set(name, { from: k } as FieldSource);
   };
   return (
-    <Section n={6} title="Fields and where each comes from" line="Each column of the table and what fills it: the solid, a block attribute, a parameter column or a step. A change makes it the table's own." slot="setup-fields">
+    <SetupPart n={6} title="Fields and where each comes from" line="Each column of the table and what fills it: the solid, a block attribute, a parameter column or a step. A change makes it the table's own." slot="setup-fields">
       <div className="flex items-center gap-2">
         <CellInput className="w-48 border-input" value={find} label="Find a field" placeholder="Find a field…" onChange={setFind} />
         <span className="text-muted-foreground">
           {view.fields.length} fields, {own} the table's own.
         </span>
         {!find && foldsNames(view.fields.length) && (
-          <button type="button" className="inline-flex items-center gap-0.5 text-muted-foreground hover:text-foreground" onClick={() => setAll((a) => !a)} aria-expanded={all} data-slot="setup-fields-all">
-            {all ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
+          <Disclosure open={all} onToggle={() => setAll((a) => !a)} slot="setup-fields-all">
             {all ? "Only the table's own" : `Every field (${view.fields.length})`}
-          </button>
+          </Disclosure>
         )}
       </div>
       <div className="grid grid-cols-[minmax(8rem,auto)_minmax(10rem,1fr)_auto_minmax(8rem,1fr)] items-center gap-x-2 gap-y-0.5">
@@ -659,6 +650,6 @@ function Fields({ view, save }: { view: SetupView; save: Save }) {
           );
         })}
       </div>
-    </Section>
+    </SetupPart>
   );
 }

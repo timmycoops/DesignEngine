@@ -2,7 +2,7 @@ import { Box, Braces, RotateCw, Save, Settings2, Undo2 } from 'lucide-react';
 import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { type CaseState, caseState, type CaseStepView, type ColumnSteps, type ColumnUnit, type DataflowState, objectDetails, type ParameterTable, reservesCaseStep, reservesColumn, reservesColumnTrace, reservesRerunParams, reservesSolids } from '@/bridge';
 import { openItem, viewBeside } from '@/workspace/tablesSide';
-import { PanelHead, StatusBadge } from '@/design-system/kit';
+import { Disclosure, ok, PanelHead, refused, type Said, SaidLine, StatusBadge, TextButton } from '@/design-system/kit';
 import { Button } from '@/design-system/ui/button';
 import { cn } from 'cn';
 import { type Draft, useWorkspace } from '@/workspace/context';
@@ -85,12 +85,12 @@ export function ReservesCasePanel({ caseTable = null }: { caseTable?: string | n
   const [params, setParams] = useState<Record<string, ParameterTable>>({});
   const [error, setError] = useState<string | null>(null);
   const [liveWhy, setLiveWhy] = useState<string | null>(null);
-  const [said, setSaid] = useState<{ text: string; refused: boolean } | null>(null);
+  const [said, setSaid] = useState<Said | null>(null);
   const [saving, setSaving] = useState(false);
   // The case's dataflows and which is open (decision 4, workstream 6): none picked, its reserves dataflow.
   const [state, setState] = useState<CaseState | null>(null);
   const [openFlow, setOpenFlow] = useState<string | null>(null);
-  const [caseSaid, setCaseSaid] = useState<{ text: string; refused: boolean } | null>(null);
+  const [caseSaid, setCaseSaid] = useState<Said | null>(null);
   // The case's Setup, its own view in place of the working area (Case setup and unit plan, decision 1), and the step unit
   // by unit.
   const [setupOpen, setSetupOpen] = useState(false);
@@ -274,13 +274,13 @@ export function ReservesCasePanel({ caseTable = null }: { caseTable?: string | n
       for (const [id, t] of edits.tables) {
         const name = (summary?.objects ?? []).find((o) => o.id === id)?.name ?? id;
         const reply = await runRecord('parameters.save', { table: id, name, content: t });
-        if (reply.error) return setSaid({ text: `${name}: ${reply.error}`, refused: true });
+        if (reply.error) return setSaid(refused(`${name}: ${reply.error}`));
         setDraft(id, null);
       }
       const reply = await runRecord('reserves.run', await reservesRerunParams(table.id, []));
-      setSaid(reply.error ? { text: reply.error, refused: true } : { text: `Saved, and ${table.name} run again from its setup.`, refused: false });
+      setSaid(reply.error ? refused(reply.error) : ok(`Saved, and ${table.name} run again from its setup.`));
     } catch (e) {
-      setSaid({ text: String(e), refused: true });
+      setSaid(refused(String(e)));
     } finally {
       setSaving(false);
     }
@@ -311,9 +311,9 @@ export function ReservesCasePanel({ caseTable = null }: { caseTable?: string | n
     setCaseSaid(null);
     try {
       const reply = await runRecord('reserves.run', await reservesRerunParams(table.id, only));
-      setCaseSaid(reply.error ? { text: reply.error, refused: true } : { text: `${only.length ? only.join(' › ') : 'Every block'} run again into ${table.name}.`, refused: false });
+      setCaseSaid(reply.error ? refused(reply.error) : ok(`${only.length ? only.join(' › ') : 'Every block'} run again into ${table.name}.`));
     } catch (e) {
-      setCaseSaid({ text: String(e), refused: true });
+      setCaseSaid(refused(String(e)));
     } finally {
       setRerunning(false);
     }
@@ -382,9 +382,9 @@ export function ReservesCasePanel({ caseTable = null }: { caseTable?: string | n
             {cell.kind === 'built_in' ? (
               cell.rule
             ) : (
-              <button type="button" className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground hover:underline" onClick={() => openTool('params', `formula:${cell.dataflow ?? column!.dataflow_id}:${cell.step}`)}>
+              <TextButton className="gap-1" onClick={() => openTool('params', `formula:${cell.dataflow ?? column!.dataflow_id}:${cell.step}`)}>
                 <Braces className="size-3" /> Open its script in the formula panel
-              </button>
+              </TextButton>
             )}
           </div>
           <div className="grid grid-cols-[3.5rem_1fr] gap-x-2 gap-y-0.5">
@@ -448,11 +448,11 @@ export function ReservesCasePanel({ caseTable = null }: { caseTable?: string | n
             <span className={cn(edits ? 'text-edited' : 'text-muted-foreground')}>{edits ? 'Unsaved: the whole case runs again as you type.' : 'Type a setting to see the whole case run again.'}</span>
             {edits?.dataflow && <span className="text-muted-foreground">The dataflow's own edits save in the Parameters tab.</span>}
           </div>
-          {said && <div className={said.refused ? 'text-destructive' : 'text-ok'}>{said.text}</div>}
+          <SaidLine said={said} />
           <section className="border-t border-border pt-1" data-slot="case-unit-by-unit">
-            <button type="button" className="text-muted-foreground hover:text-foreground hover:underline" onClick={() => setUnitOpen((o) => !o)}>
-              {unitOpen ? '▾' : '▸'} This step unit by unit: {into ? unitWords(into) : 'the unit followed'}'s workings{cell.kind === 'formula' ? ' and its formula traced' : ''}
-            </button>
+            <Disclosure open={unitOpen} onToggle={() => setUnitOpen((o) => !o)}>
+              This step unit by unit: {into ? unitWords(into) : 'the unit followed'}'s workings{cell.kind === 'formula' ? ' and its formula traced' : ''}
+            </Disclosure>
             {unitOpen && column && (
               <StepPane
                 column={column}
@@ -474,7 +474,7 @@ export function ReservesCasePanel({ caseTable = null }: { caseTable?: string | n
   const showIn3d = async (path: string[]) => {
     if (!table) return;
     const ids = await reservesSolids(table.id, path);
-    if (ids.length === 0) return setCaseSaid({ text: `${path.join(' › ')} has no solids in the project to show`, refused: true });
+    if (ids.length === 0) return setCaseSaid(refused(`${path.join(' › ')} has no solids in the project to show`));
     setSelection(ids);
     // With the view beside the case (both shown, or popped out): framed there, the Tables side kept (decision 0109).
     if (!viewBeside()) openTool('properties');
@@ -559,11 +559,7 @@ export function ReservesCasePanel({ caseTable = null }: { caseTable?: string | n
       </div>
       <CaseForms cases={cases} open={table.id} onOpen={setPick} onOpenDataflow={(d) => (setSetupOpen(false), setOpenFlow(d))} />
       {setupOpen && <CaseSetup table={table.id} onDone={() => setSetupOpen(false)} />}
-      {caseSaid && (
-        <div className={cn('px-2 py-1', caseSaid.refused ? 'text-destructive' : 'text-ok')} data-slot="case-said">
-          {caseSaid.text}
-        </div>
-      )}
+      <SaidLine said={caseSaid} className="px-2 py-1" slot="case-said" />
       {!setupOpen && openRow && <RowDataflowView table={table} dataflow={openRow} />}
       {!setupOpen && !openRow && error && <div className="px-2 py-1 text-destructive">{error}</div>}
       {!setupOpen && !openRow && liveWhy && (

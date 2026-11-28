@@ -1,7 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { type ColumnSteps, type FieldSet, fieldSets, setFieldSets } from '@/bridge';
-import { Choice, Select } from '@/design-system/kit';
-import { Button } from '@/design-system/ui/button';
+import { Check, Choice, Disclosure, ok, PanelButton, refused, type Said, SaidLine, Select, TextButton, TextInput } from '@/design-system/kit';
 import { cn } from 'cn';
 import { unitWords, valueText } from './columnSteps';
 import { fieldMap, fieldsOfSet, GROUP_WORDS, type GroupBy, journeyOf, OWN_SETS, type PieceField, type PieceGroup, type PieceRow, pieceSheet, piecesOf, rowChanged, rowWords, unitGroups } from './caseUnits';
@@ -28,7 +27,7 @@ export function UnitsTable({ column, at, block, fill = false }: { column: Column
   const [show, setShow] = useState<Show>('arrow');
   const [picked, setPicked] = useState<string | null>(null);
   const [naming, setNaming] = useState<string | null>(null);
-  const [said, setSaid] = useState<{ text: string; refused: boolean } | null>(null);
+  const [said, setSaid] = useState<Said | null>(null);
   const [map, setMap] = useState(false);
   useEffect(() => {
     void fieldSets().then(setMine).catch(() => setMine([]));
@@ -68,9 +67,9 @@ export function UnitsTable({ column, at, block, fill = false }: { column: Column
       setMine(kept);
       setSet(name);
       setFind('');
-      setSaid({ text: `${name} saved with the project: ${shown.length} fields.`, refused: false });
+      setSaid(ok(`${name} saved with the project: ${shown.length} fields.`));
     } catch (e) {
-      setSaid({ text: String(e), refused: true });
+      setSaid(refused(String(e)));
     }
     setNaming(null);
   };
@@ -79,7 +78,7 @@ export function UnitsTable({ column, at, block, fill = false }: { column: Column
       setMine(await setFieldSets(mine.filter((s) => s.name !== set)));
       setSet('This step');
     } catch (e) {
-      setSaid({ text: String(e), refused: true });
+      setSaid(refused(String(e)));
     }
   };
 
@@ -120,48 +119,48 @@ export function UnitsTable({ column, at, block, fill = false }: { column: Column
             ))}
           </Select>
         </label>
-        <input
-          className="h-6 w-32 rounded-sm border border-input bg-transparent px-1 text-xs outline-none focus-visible:border-ring"
+        <TextInput size="sm"
+          className="w-32"
           placeholder="Find a field"
-          aria-label="Find a field across every set"
+          label="Find a field across every set"
           value={find}
-          onChange={(e) => setFind(e.target.value)}
+          onChange={(value) => setFind(value)}
         />
         <label className="flex items-center gap-1">
-          <input type="checkbox" checked={changedOnly} onChange={(e) => setChangedOnly(e.target.checked)} aria-label="Changed only" />
+          <Check checked={changedOnly} onChange={(on) => setChangedOnly(on)} label="Changed only" />
           <span>Changed only</span>
         </label>
         <Choice value={show} options={['arrow', 'was'] as const} labels={{ arrow: 'before → after', was: 'after, was' }} onChange={setShow} label="How a change shows" />
         {naming === null ? (
-          <button type="button" className="text-muted-foreground hover:text-foreground hover:underline" onClick={() => setNaming('')} title="Keep the fields shown now as a set of your own, saved with the project">
+          <TextButton onClick={() => setNaming('')} title="Keep the fields shown now as a set of your own, saved with the project">
             Save as a set
-          </button>
+          </TextButton>
         ) : (
           <span className="flex items-center gap-1">
-            <input
-              className="h-6 w-28 rounded-sm border border-input bg-transparent px-1 text-xs outline-none focus-visible:border-ring"
+            <TextInput size="sm"
+              className="w-28"
               placeholder="Its name"
-              aria-label="The new field set's name"
+              label="The new field set's name"
               value={naming}
               autoFocus
-              onChange={(e) => setNaming(e.target.value)}
+              onChange={(value) => setNaming(value)}
               onKeyDown={(e) => (e.key === 'Enter' && naming.trim() ? void saveSet(naming.trim()) : e.key === 'Escape' ? setNaming(null) : undefined)}
             />
-            <Button size="sm" className="h-6 px-2 text-xs" disabled={!naming.trim()} onClick={() => void saveSet(naming.trim())}>
+            <PanelButton variant="default" row disabled={!naming.trim()} onClick={() => void saveSet(naming.trim())}>
               Save
-            </Button>
+            </PanelButton>
           </span>
         )}
         {mine.some((s) => s.name === set) && (
-          <button type="button" className="text-muted-foreground hover:text-destructive hover:underline" onClick={() => void deleteSet()}>
+          <TextButton tone="danger" onClick={() => void deleteSet()}>
             Delete {set}
-          </button>
+          </TextButton>
         )}
-        <button type="button" className="text-muted-foreground hover:text-foreground hover:underline" onClick={() => setMap((m) => !m)}>
+        <TextButton onClick={() => setMap((m) => !m)}>
           {map ? 'Hide the field map' : 'Field map'}
-        </button>
+        </TextButton>
       </div>
-      {said && <div className={said.refused ? 'text-destructive' : 'text-ok'}>{said.text}</div>}
+      <SaidLine said={said} />
       <div className="flex gap-2">
         <div className="min-w-0 flex-1 overflow-x-auto">
           <table className="w-full border-collapse" data-slot="units-grid">
@@ -325,9 +324,9 @@ function PickedPiece({ column, at, block, row, onClose }: { column: ColumnSteps;
           )}
           <div className="columns-[30rem] gap-x-6">{groupList(sheet.rest)}</div>
           {quietCount > 0 && (
-            <button type="button" className="mt-1 inline-flex items-center gap-0.5 text-muted-foreground hover:text-foreground" onClick={() => setQuietOpen((o) => !o)} aria-expanded={quietOpen} data-slot="piece-quiet" data-count={quietCount}>
-              {quietOpen ? '▾' : '▸'} {quietCount} more, empty or nought
-            </button>
+            <Disclosure open={quietOpen} onToggle={() => setQuietOpen((o) => !o)} className="mt-1" slot="piece-quiet" data-count={quietCount}>
+              {quietCount} more, empty or nought
+            </Disclosure>
           )}
           {quietOpen && <div className="columns-[30rem] gap-x-6">{groupList(sheet.quiet)}</div>}
         </div>

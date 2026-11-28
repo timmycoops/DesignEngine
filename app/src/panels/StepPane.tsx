@@ -1,7 +1,7 @@
 import { Braces, Columns3 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import type { ColumnSteps, ColumnUnit, FormulaTrace, ParamRead } from '@/bridge';
-import { StatusBadge } from '@/design-system/kit';
+import { StatusBadge, TextButton } from '@/design-system/kit';
 import { cn } from 'cn';
 import { stepLabel, unitWords, valueText } from './columnSteps';
 import { writesByFolder } from './dataflowView';
@@ -230,9 +230,9 @@ function CellCode({ column, at, trace, onEdit }: { column: ColumnSteps; at: numb
       {done?.stopped && <div className="text-destructive">Stopped{done.stopped.line ? ` at line ${done.stopped.line}` : ''}: {done.stopped.message}</div>}
       {done && done.said.length > 0 && <div className="text-muted-foreground">Printed: {done.said.join(' · ')}</div>}
       {onEdit && (
-        <button type="button" className="mt-0.5 inline-flex items-center gap-1 text-muted-foreground hover:text-foreground hover:underline" onClick={onEdit} title="Open this formula in the Parameters tab to edit it">
+        <TextButton className="mt-0.5 gap-1" onClick={onEdit} title="Open this formula in the Parameters tab to edit it">
           <Braces className="size-3" /> Edit in the formula panel
-        </button>
+        </TextButton>
       )}
     </Row>
   );
@@ -301,9 +301,9 @@ function CellOut({ column, at, onWhole }: { column: ColumnSteps; at: number; onW
       )}
       <div className="flex items-center gap-3 text-muted-foreground">
         {balance && <span data-slot="cell-volume">{balance}</span>}
-        <button type="button" className="inline-flex items-center gap-1 hover:text-foreground hover:underline" onClick={onWhole} title="Every unit and every field after this step, a step at a time">
+        <TextButton tone="plain" className="gap-1" onClick={onWhole} title="Every unit and every field after this step, a step at a time">
           <Columns3 className="size-3" /> Whole column
-        </button>
+        </TextButton>
       </div>
     </Row>
   );
