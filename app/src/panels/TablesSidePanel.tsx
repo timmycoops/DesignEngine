@@ -1,5 +1,5 @@
 import { ChevronsLeft, ChevronsRight } from 'lucide-react';
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { ObjectMenu, PanelHead } from '@/design-system/kit';
 import { cn } from 'cn';
 import { type CaseHeadline, type ObjectSummary } from '@/bridge';
@@ -16,6 +16,8 @@ const NEW_SCRIPT = 'new-script';
 
 /** Whether the list is folded to its numbers, remembered on this machine. */
 const FOLD_KEY = 'zd.tables.list.folded.v1';
+/** The panel's width under which its list folds by itself. */
+const NARROW_PX = 900;
 const foldedAtStart = () => {
   try {
     return localStorage.getItem(FOLD_KEY) === 'yes';
@@ -52,7 +54,18 @@ export function TablesSidePanel() {
   }, [keeps]);
   const caseShown = section === 'case' || section === 'results' ? id : null;
   // The list folds to its six numbers, for the room a case's three columns want on a narrow window.
-  const [folded, setFolded] = useState(foldedAtStart);
+  const [foldedByHand, setFolded] = useState(foldedAtStart);
+  // Narrower than this, as beside the view in Both (decision 0109), the list folds by itself: the item wants the room.
+  const box = useRef<HTMLDivElement>(null);
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const seen = new ResizeObserver(() => setNarrow(el.clientWidth > 0 && el.clientWidth < NARROW_PX));
+    seen.observe(el);
+    return () => seen.disconnect();
+  }, []);
+  const folded = foldedByHand || narrow;
   const fold = (to: boolean) => {
     setFolded(to);
     try {
@@ -65,12 +78,14 @@ export function TablesSidePanel() {
   const byId = new Map((summary?.objects ?? []).map((o) => [o.id, o]));
 
   return (
-    <div className="flex h-full min-h-0 text-xs" data-tool-panel="tables-side" data-section={section} data-item={id ?? ''}>
+    <div ref={box} className="flex h-full min-h-0 text-xs" data-tool-panel="tables-side" data-section={section} data-item={id ?? ''} data-narrow={narrow ? 'yes' : 'no'}>
       {folded && (
         <nav className="flex w-8 shrink-0 flex-col items-center gap-1 border-r border-border bg-card py-1" aria-label="Tables, down the chain, folded" data-slot="tables-list" data-folded="yes">
-          <button type="button" className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => fold(false)} title="Open the list" aria-label="Open the list" data-slot="tables-list-fold">
-            <ChevronsRight className="size-3.5" />
-          </button>
+          {!narrow && (
+            <button type="button" className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => fold(false)} title="Open the list" aria-label="Open the list" data-slot="tables-list-fold">
+              <ChevronsRight className="size-3.5" />
+            </button>
+          )}
           {SECTIONS.map((s, n) => (
             <button key={s.id} type="button" className={cn('w-6 rounded py-0.5 text-center tabular-nums hover:bg-accent', section === s.id && 'bg-selection font-semibold text-primary')} onClick={() => openItem(s.id)} title={`${n + 1} · ${s.title}: ${s.tip}`} data-slot="tables-section-folded" data-section={s.id}>
               {n + 1}

@@ -188,6 +188,9 @@ test('the group and the side are remembered a project: Strings and Design for on
   rememberSide('D:/pits/b.zdp', 'design', storage);
   assert.equal(sideOf('D:/pits/a.zdp', storage), 'tables');
   assert.equal(sideOf('D:/pits/b.zdp', storage), 'design');
+  // Both at once is kept as well (decision 0109).
+  rememberSide('D:/pits/c.zdp', 'both', storage);
+  assert.equal(sideOf('D:/pits/c.zdp', storage), 'both');
   held.set('zd.side.v1', '[["x","sideways"]]');
   assert.equal(sideOf('x', storage), 'design', 'a side that is none is not kept');
 });

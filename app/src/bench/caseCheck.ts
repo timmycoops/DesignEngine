@@ -143,6 +143,20 @@ export async function checkCase(path: string, log: (line: string) => void, show:
   }, 20_000);
   expect('the units table shows B5 before and after rom_loss', !!table);
 
+  // Both (decision 0109): the case beside the view, a block picked on its map picked in the view too.
+  document.querySelector<HTMLElement>('[data-slot="side-switch"] [data-side="both"]')?.click();
+  await wait(800);
+  (await until(() => document.querySelector<HTMLElement>('[data-slot="map-block"][data-block="Pit 2 B3"]'), 10_000))?.click();
+  const pickedInView = await until(() => (document.body.textContent ?? '').match(/(\d+) selected/)?.[1] ?? null, 15_000);
+  const viewShown = (api.getPanel('viewport')?.group.element.getBoundingClientRect().width ?? 0) > 300;
+  expect('with both shown, a block picked on the case map is picked in the view beside it', !!pickedInView && Number(pickedInView) > 0 && viewShown, { picked: pickedInView, view_shown: viewShown });
+  await picture?.('case-both');
+  document.querySelector<HTMLElement>('[data-slot="side-switch"] [data-side="tables"]')?.click();
+  await wait(800);
+  // B5 picked again, as the checks after this read it.
+  document.querySelector<HTMLElement>('[data-slot="map-block"][data-block="Pit 3 B5"]')?.click();
+  await until(() => (document.querySelector('[data-slot="units-table"]')?.textContent ?? '').includes('Pit / 3 / B5 before and after rom_loss'), 20_000);
+
   // The working area by the dock's width (Case tab layout plan, decisions 6 and 8): the tab given the window, then
   // narrowed to 1,399 and 999 px. Step, units table and block map side by side to the foot; under 1,400 the block map
   // under the step; under 1,000 the units table under both and the header's figures in the pill's tip.

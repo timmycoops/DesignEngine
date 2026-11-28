@@ -2,7 +2,7 @@
 // case the top row runs following what's opened. Run with `pnpm test`.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { caseOpen, itemNow, listOf, OBJECTS, onItem, openItem, resetItems, SECTIONS, sectionOf, setCase } from '../src/workspace/tablesSide.ts';
+import { caseOpen, itemNow, listOf, OBJECTS, onItem, openItem, resetItems, SECTIONS, sectionOf, setCase, setShowing, showingNow } from '../src/workspace/tablesSide.ts';
 import { isItem, PANELS } from '../src/workspace/panels.ts';
 
 const objects = [
@@ -91,4 +91,13 @@ test("each of the list's sections is an item for Find a command, opened in the T
     PANELS.filter((p) => isItem(p.id)).map((p) => p.title),
     SECTIONS.map((s) => s.title),
   );
+});
+
+test('what the window shows is told to the Tables side, so a pick goes to the view only with both shown (0109)', () => {
+  assert.equal(showingNow(), 'design');
+  setShowing('both');
+  assert.equal(showingNow(), 'both');
+  setShowing('tables');
+  assert.equal(showingNow(), 'tables');
+  setShowing('design');
 });
