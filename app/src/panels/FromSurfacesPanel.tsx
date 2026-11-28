@@ -1,8 +1,7 @@
 import { Check } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ObjectSummary } from '@/bridge';
-import { Input } from '@/design-system/ui/input';
-import { type Asker, AskSteps, Field, NumberInput, NumberOrBlank, type RunReport, type ToolAction, ToolPanel, ToolSection, useAsking } from '@/design-system/kit';
+import { type Asker, AskSteps, Field, NumberInput, NumberOrBlank, type RunReport, TextInput, type ToolAction, ToolPanel, ToolSection, useAsking } from '@/design-system/kit';
 import { choiceWords } from '@/tools';
 import { useWorkspace } from '@/workspace/context';
 
@@ -257,7 +256,7 @@ export function FromSurfacesPanel() {
           </Field>
         )}
         <Field label="Layer">
-          <Input className="h-7 px-1.5 text-xs" value={layers[mode]} aria-label="Layer for the strings made" onChange={(e) => setLayers({ ...layers, [mode]: e.target.value })} />
+          <TextInput value={layers[mode]} label="Layer for the strings made" onChange={(value) => setLayers({ ...layers, [mode]: value })} />
         </Field>
       </ToolSection>
     </ToolPanel>

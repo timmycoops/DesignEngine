@@ -1,9 +1,8 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import { Aperture, Box, Cone, Cuboid, Expand, Focus, Magnet, Map as MapIcon, MousePointer2, PaintBucket, PenLine, Ruler, Scissors, StepBack, StepForward } from 'lucide-react';
-import { ToolButton } from '@/design-system/kit';
+import { TextInput, ToolButton } from '@/design-system/kit';
 import { Button } from '@/design-system/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/design-system/ui/dropdown-menu';
-import { Input } from '@/design-system/ui/input';
 import { Separator } from '@/design-system/ui/separator';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/design-system/ui/tooltip';
 import type { Mode } from '@/viewport/strings';
@@ -187,12 +186,12 @@ export function ViewBar() {
           <ToolButton size="icon-sm" tip="Step back ([)" aria-label="Step back" onClick={() => view.stepSection(-1)}>
             <StepBack />
           </ToolButton>
-          <Input
-            className="h-7 w-14 px-1.5 text-xs tabular-nums"
+          <TextInput
+            className="w-14 tabular-nums"
             value={view.sectionStep}
-            onChange={(e) => view.setSectionStep(e.target.value)}
+            onChange={(value) => view.setSectionStep(value)}
             title="Metres to step, square to the section"
-            aria-label="Section step in metres"
+            label="Section step in metres"
           />
           <ToolButton size="icon-sm" tip="Step on (])" aria-label="Step on" onClick={() => view.stepSection(1)}>
             <StepForward />

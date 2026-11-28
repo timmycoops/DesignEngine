@@ -2,10 +2,9 @@ import { Download, EyeOff, FileUp, MousePointerSquareDashed, Scan, Trash2 } from
 import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import { briefCheck, type CalculatedColumn, concealed, type Grid, type GridRow, type ObjectKind, type ObjectsCalculated, objectsCalculated, solidsTable, tableGrid } from '@/bridge';
 import { columnHelper, DataTable } from '@/design-system/DataTable';
-import { Choice, EditableCell, Field, FilterInput, GroupBy, NumberInput, ScriptEditor, Select } from '@/design-system/kit';
+import { Choice, EditableCell, Field, FilterInput, GroupBy, NumberInput, ok, refused, type Said, SaidLine, ScriptEditor, Select, TextInput } from '@/design-system/kit';
 import type { When } from '@/filters';
 import { Button } from '@/design-system/ui/button';
-import { Input } from '@/design-system/ui/input';
 import { cn } from 'cn';
 import { useWorkspace } from '@/workspace/context';
 import { attributeColumns, csvOf, densityColumns, filterable, shownRows, type SolidRow, totalsOf } from './blockTable';
@@ -74,7 +73,7 @@ export function BlockTable({ picker }: { picker?: ReactNode }) {
   const [naming, setNaming] = useState<string | null>(null);
   /** Update records from a CSV, its strip open under the head (decision 5). */
   const [updating, setUpdating] = useState(false);
-  const [said, setSaid] = useState<{ error?: string; text?: string }>({});
+  const [said, setSaid] = useState<Said | null>(null);
   /** The Objects table's calculated columns (Table setup plan, decision 9): worked out on the rows, never stored. */
   const [calc, setCalc] = useState<{ ids: string[]; of: ObjectsCalculated } | null>(null);
   const [calcOpen, setCalcOpen] = useState<{ editing: CalculatedColumn | null } | null>(null);
@@ -168,12 +167,12 @@ export function BlockTable({ picker }: { picker?: ReactNode }) {
     for (const c of cells) {
       const asNumber = readEntry(c.text, true);
       const r = numeric ? asNumber : fresh && 'value' in asNumber ? asNumber : readEntry(c.text, false);
-      if ('error' in r) return setSaid({ error: `${key}: ${r.error}` });
+      if ('error' in r) return setSaid(refused(`${key}: ${r.error}`));
       read.push({ object: c.id, attribute: key, value: r.value });
     }
     const outcome = await runRecord('object.set_attributes', { cells: read });
-    if (outcome.error) return setSaid({ error: outcome.error });
-    setSaid({ text: `${outcome.record?.messages?.[0] ?? 'Set'}; one undo puts them back` });
+    if (outcome.error) return setSaid(refused(outcome.error));
+    setSaid(ok(`${outcome.record?.messages?.[0] ?? 'Set'}; one undo puts them back`));
   };
   const withVolume = kind === 'solid' || (kind === 'all' && rows.some((r) => Number.isFinite(r.volume)));
   const densities = useMemo(() => densityColumns(columns), [columns]);
@@ -198,7 +197,7 @@ export function BlockTable({ picker }: { picker?: ReactNode }) {
     const timer = setTimeout(() => {
       void tableGrid({ of: 'objects', objects: shown.map((r) => r.id), density: rd }, { group: groupBy, open, columns: gridColumns, sort })
         .then((g) => live && setGrid(g))
-        .catch((e) => live && setSaid({ error: String(e) }));
+        .catch((e) => live && setSaid(refused(String(e))));
     }, 150);
     return () => {
       live = false;
@@ -276,9 +275,9 @@ export function BlockTable({ picker }: { picker?: ReactNode }) {
     setConfirming(false);
     const ids = shown.map((r) => r.id);
     const outcome = await runRecord('object.delete_many', { objects: ids });
-    if (outcome.error) return setSaid({ error: outcome.error });
+    if (outcome.error) return setSaid(refused(outcome.error));
     setSelection([]);
-    setSaid({ text: `${fmt(ids.length)} ${ids.length === 1 ? one : many} deleted${withVolume ? `, ${fmt(totals.volume)} m³` : ''}; one undo brings them back` });
+    setSaid(ok(`${fmt(ids.length)} ${ids.length === 1 ? one : many} deleted${withVolume ? `, ${fmt(totals.volume)} m³` : ''}; one undo brings them back`));
   };
 
   const saveCsv = () => {
@@ -309,7 +308,7 @@ export function BlockTable({ picker }: { picker?: ReactNode }) {
             ))}
           </Select>
         )}
-        <Input className="h-7 w-36 px-1.5 text-xs" value={words} placeholder="Words: 3 M coal…" aria-label="Filter the rows by words" onChange={(e) => setWords(e.target.value)} />
+        <TextInput className="w-36" value={words} placeholder="Words: 3 M coal…" label="Filter the rows by words" onChange={(value) => setWords(value)} />
         <FilterInput rows={filterRows} value={when} onChange={setWhen} label="Filter the rows by attributes" className="w-72" />
         {withVolume && (
           <Field label="Under" hint="Only rows under this volume; 0 for any">
@@ -321,13 +320,13 @@ export function BlockTable({ picker }: { picker?: ReactNode }) {
             + Attribute
           </button>
         ) : (
-          <input
+          <TextInput size="sm"
             autoFocus
-            aria-label="The new attribute's name"
+            label="The new attribute's name"
             placeholder="name, Enter"
-            className="h-6 w-28 rounded-md border border-input bg-input/30 px-1.5 text-xs outline-none"
+            className="w-28"
             value={naming}
-            onChange={(e) => setNaming(e.target.value)}
+            onChange={(value) => setNaming(value)}
             onBlur={() => setNaming(null)}
             onKeyDown={(e) => {
               if (e.key === 'Escape') setNaming(null);
@@ -427,7 +426,7 @@ export function BlockTable({ picker }: { picker?: ReactNode }) {
             <FileUp className="size-3.5" /> Update records…
           </Button>
         </span>
-        {said.error ? <span className="w-full text-destructive">{said.error}</span> : said.text ? <span className="w-full text-ok">{said.text}</span> : null}
+        <SaidLine said={said} inline className="w-full" />
       </div>
       {updating && (
         <UpdateRecords
@@ -511,7 +510,7 @@ export function BlockTable({ picker }: { picker?: ReactNode }) {
  */
 function ObjectScriptStrip({ source, onChange, ids, onClose }: { source: string; onChange: (s: string) => void; ids: string[]; onClose: () => void }) {
   const { runRecord } = useWorkspace();
-  const [said, setSaid] = useState<{ error?: string; text?: string }>({});
+  const [said, setSaid] = useState<Said | null>(null);
   const [running, setRunning] = useState(false);
   // Checked as it's typed against the solids shown, as a run would (decision 0104): each problem on its line.
   const [problems, setProblems] = useState<{ message: string; line: number | null }[]>([]);
@@ -531,7 +530,7 @@ function ObjectScriptStrip({ source, onChange, ids, onClose }: { source: string;
     setRunning(true);
     const outcome = await runRecord('object.script', { objects: ids, source });
     setRunning(false);
-    setSaid(outcome.error ? { error: outcome.error } : { text: `${outcome.record?.messages?.[0] ?? 'Done'}; one undo puts them back` });
+    setSaid(outcome.error ? refused(outcome.error) : ok(`${outcome.record?.messages?.[0] ?? 'Done'}; one undo puts them back`));
   };
   return (
     <div className="shrink-0 space-y-1 border-b border-border px-2 py-1" data-slot="object-script">
@@ -544,7 +543,7 @@ function ObjectScriptStrip({ source, onChange, ids, onClose }: { source: string;
           Close
         </Button>
         <CopyForAi brief={{ kind: 'object', source }} problems={problems} />
-        {said.error ? <span className="text-destructive">{said.error}</span> : said.text ? <span className="text-ok">{said.text}</span> : null}
+        <SaidLine said={said} inline />
       </div>
     </div>
   );

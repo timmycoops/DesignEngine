@@ -1,10 +1,7 @@
 import { ArrowDown, ArrowLeftRight, ArrowUp, Crosshair, Footprints, Move, PenLine, Pencil, Play, Plus, Save, Trash2, Undo2 } from 'lucide-react';
-import { type MouseEvent, type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { type AzimuthSector, type FaceDesign, type FaceDirection, type FaceLine, type FaceProfile, type HorizonValue, type LineEdit, type Note, objectDetails, type ObjectSummary, type ProfileStep, type Ramp, type RampBerm, type RampFixed, type RampHeading, type RuleValue, type StepTarget, type StepValue, type Vec3, type WallRule, type WallSide } from '@/bridge';
-import { Button } from '@/design-system/ui/button';
-import { Checkbox } from '@/design-system/ui/checkbox';
-import { Input } from '@/design-system/ui/input';
-import { NoteLine, ObjectMenu, PanelHead, Select } from '@/design-system/kit';
+import { Check, Choice, IconButton, InlineField, NoteLine, NumberOrBlank, ObjectMenu, PanelButton, PanelHead, SectionHead, Select, TargetOptions, TextButton, TextInput } from '@/design-system/kit';
 import { rampColour } from '@/viewport/rampColours';
 import { useWorkspace } from '@/workspace/context';
 
@@ -40,30 +37,6 @@ const usualTurnJoin = 50;
 /** A switchback box's far end square across the strip, unless a ramp says otherwise (degrees). */
 const squareEnd = 90;
 
-/** A number that can be typed through half-finished values: it only reports what parses, and goes back to what's held on leaving it. */
-function NumberBox({ value, onChange, title, width = 'w-16', disabled }: { value: number | null; onChange: (v: number) => void; title: string; width?: string; disabled?: boolean }) {
-  const held = value === null ? '' : String(value);
-  const [text, setText] = useState(held);
-  useEffect(() => {
-    setText((t) => (t.trim() !== '' && Number(t) === value ? t : held));
-  }, [value, held]);
-  return (
-    <Input
-      className={`h-7 ${width} px-1 text-xs tabular-nums`}
-      value={text}
-      title={title}
-      aria-label={title}
-      disabled={disabled}
-      onBlur={() => setText(held)}
-      onChange={(e) => {
-        setText(e.target.value);
-        const n = Number(e.target.value);
-        if (e.target.value.trim() !== '' && Number.isFinite(n)) onChange(n);
-      }}
-    />
-  );
-}
-
 /** What's typed in a batter or width: a number if it reads as one, otherwise a rule's name. */
 function stepValue(text: string): StepValue {
   const n = Number(text);
@@ -79,16 +52,16 @@ function ValueBox({ value, unit, what, rules, onChange }: { value: StepValue; un
   }, [value]);
   return (
     <span className="flex items-center gap-1">
-      <Input
-        className="h-7 w-24 px-1 text-xs tabular-nums"
+      <TextInput
+        className="w-24 tabular-nums"
         list={list}
         value={text}
         title={`${what}, or the name of a rule`}
-        aria-label={what}
+        label={what}
         onBlur={() => setText(String(value))}
-        onChange={(e) => {
-          setText(e.target.value);
-          onChange(stepValue(e.target.value));
+        onChange={(value) => {
+          setText(value);
+          onChange(stepValue(value));
         }}
       />
       <datalist id={list}>
@@ -101,42 +74,8 @@ function ValueBox({ value, unit, what, rules, onChange }: { value: StepValue; un
   );
 }
 
-function Heading({ children, action }: { children: ReactNode; action?: ReactNode }) {
-  return (
-    <div className="mt-3 flex items-center gap-2 border-t px-3 pt-2 pb-1 text-xs font-medium text-muted-foreground">
-      <span className="uppercase tracking-wide">{children}</span>
-      <span className="ml-auto flex items-center gap-1">{action}</span>
-    </div>
-  );
-}
-
-function SmallButton({ onClick, title, children, disabled }: { onClick: () => void; title?: string; children: ReactNode; disabled?: boolean }) {
-  return (
-    <Button variant="outline" size="sm" className="h-7 gap-1 px-2 text-xs" title={title} disabled={disabled} onClick={onClick}>
-      {children}
-    </Button>
-  );
-}
-
-function IconButton({ onClick, title, children, disabled }: { onClick: (e: MouseEvent<HTMLButtonElement>) => void; title: string; children: ReactNode; disabled?: boolean }) {
-  return (
-    <button className="rounded p-1 text-muted-foreground hover:text-foreground disabled:opacity-30" title={title} aria-label={title} disabled={disabled} onClick={onClick}>
-      {children}
-    </button>
-  );
-}
-
-function Choice<T extends string>({ value, options, onChange }: { value: T; options: readonly T[]; onChange: (v: T) => void }) {
-  return (
-    <span className="inline-flex rounded border">
-      {options.map((option) => (
-        <button key={option} className={`px-1.5 py-1 capitalize ${option === value ? 'bg-selection text-primary' : 'text-muted-foreground'}`} onClick={() => onChange(option)}>
-          {option}
-        </button>
-      ))}
-    </span>
-  );
-}
+/** A number box that takes only numbers: left blank, it holds the number it had. */
+const whenNumber = (set: (v: number) => void) => (v: number | null) => v !== null && set(v);
 
 const SIDES: readonly WallSide[] = ['left', 'right'];
 const DIRECTIONS: readonly FaceDirection[] = ['up', 'down'];
@@ -268,15 +207,15 @@ function firstNumber(rule: RuleValue) {
 function ListBox({ values, onChange }: { values: number[]; onChange: (values: number[]) => void }) {
   const [text, setText] = useState(values.join(', '));
   return (
-    <Input
-      className="h-7 min-w-0 flex-1 px-1 text-xs tabular-nums"
+    <TextInput
+      className="min-w-0 flex-1 tabular-nums"
       value={text}
       placeholder="70, 65, 60"
       title="One value for each segment of the string, in order"
-      aria-label="Values by segment"
-      onChange={(e) => {
-        setText(e.target.value);
-        onChange(e.target.value.split(/[\s,]+/).filter(Boolean).map(Number).filter(Number.isFinite));
+      label="Values by segment"
+      onChange={(value) => {
+        setText(value);
+        onChange(value.split(/[\s,]+/).filter(Boolean).map(Number).filter(Number.isFinite));
       }}
     />
   );
@@ -293,26 +232,17 @@ function RuleNote({ rule, profiles }: { rule: WallRule; profiles: FaceProfile[] 
   );
 }
 
-function Labelled({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <span className="inline-flex items-center gap-1 text-muted-foreground">
-      {label}
-      {children}
-    </span>
-  );
-}
-
 /** What a rule of its type needs, typed on its row. */
 function RuleDetail({ rule, polygons, solidName, selectedSolid, surfaces, onChange }: { rule: RuleValue; polygons: ObjectSummary[]; solidName: string; selectedSolid: string | null; surfaces: ObjectSummary[]; onChange: (rule: RuleValue) => void }) {
   const unit = 'Degrees for a batter, metres for a berm';
   const number = (label: string, value: number, change: (v: number) => void) => (
-    <Labelled label={label}>
-      <NumberBox width="w-14" value={value} title={unit} onChange={change} />
-    </Labelled>
+    <InlineField label={label}>
+      <NumberOrBlank blank="" width="w-14" value={value} label={unit} onChange={whenNumber(change)} />
+    </InlineField>
   );
   switch (rule.type) {
     case 'fixed':
-      return <NumberBox value={rule.value} title={unit} onChange={(value) => onChange({ type: 'fixed', value })} />;
+      return <NumberOrBlank blank="" value={rule.value} label={unit} onChange={whenNumber((value) => onChange({ type: 'fixed', value }))} />;
     case 'fixed_list':
       return <ListBox values={rule.values} onChange={(values) => onChange({ ...rule, values })} />;
     case 'inside_polygon':
@@ -335,9 +265,9 @@ function RuleDetail({ rule, polygons, solidName, selectedSolid, surfaces, onChan
           <span className="max-w-32 truncate" title={solidName}>
             {solidName}
           </span>
-          <SmallButton disabled={!selectedSolid} title="Takes the solid selected in the viewport or the layer tree" onClick={() => selectedSolid && onChange({ ...rule, solid: selectedSolid })}>
+          <PanelButton disabled={!selectedSolid} title="Takes the solid selected in the viewport or the layer tree" onClick={() => selectedSolid && onChange({ ...rule, solid: selectedSolid })}>
             Use selected
-          </SmallButton>
+          </PanelButton>
           {number('Inside', rule.inside, (inside) => onChange({ ...rule, inside }))}
           {number('Outside', rule.outside, (outside) => onChange({ ...rule, outside }))}
         </span>
@@ -352,7 +282,7 @@ function RuleDetail({ rule, polygons, solidName, selectedSolid, surfaces, onChan
                 {number('Facing', sector.from, (from) => change({ from }))}
                 {number('to', sector.to, (to) => change({ to }))}
                 {number('Value', sector.value, (value) => change({ value }))}
-                <IconButton title="Remove this sector" onClick={() => onChange({ ...rule, sectors: rule.sectors.filter((_, j) => j !== k) })}>
+                <IconButton label="Remove this sector" onClick={() => onChange({ ...rule, sectors: rule.sectors.filter((_, j) => j !== k) })}>
                   <Trash2 className="size-3" />
                 </IconButton>
               </span>
@@ -360,9 +290,9 @@ function RuleDetail({ rule, polygons, solidName, selectedSolid, surfaces, onChan
           })}
           <span className="flex items-center gap-2">
             {number('Otherwise', rule.otherwise, (otherwise) => onChange({ ...rule, otherwise }))}
-            <SmallButton onClick={() => onChange({ ...rule, sectors: [...rule.sectors, { from: 0, to: 90, value: rule.otherwise }] })}>
+            <PanelButton onClick={() => onChange({ ...rule, sectors: [...rule.sectors, { from: 0, to: 90, value: rule.otherwise }] })}>
               <Plus className="size-3" /> Sector
-            </SmallButton>
+            </PanelButton>
           </span>
         </span>
       );
@@ -374,10 +304,10 @@ function RuleDetail({ rule, polygons, solidName, selectedSolid, surfaces, onChan
             return (
               <span key={k} className="flex items-center gap-2" title="A row that finishes on this surface takes this value">
                 <Select className={`${selectClass} max-w-36`} value={entry.surface} aria-label="Horizon" onChange={(e) => change({ surface: e.target.value })}>
-                  <SurfaceOptions surfaces={surfaces} />
+                  <TargetOptions surfaces={surfaces} />
                 </Select>
                 {number('Value', entry.value, (value) => change({ value }))}
-                <IconButton title="Remove this horizon" onClick={() => onChange({ ...rule, values: rule.values.filter((_, j) => j !== k) })}>
+                <IconButton label="Remove this horizon" onClick={() => onChange({ ...rule, values: rule.values.filter((_, j) => j !== k) })}>
                   <Trash2 className="size-3" />
                 </IconButton>
               </span>
@@ -385,9 +315,9 @@ function RuleDetail({ rule, polygons, solidName, selectedSolid, surfaces, onChan
           })}
           <span className="flex items-center gap-2">
             {number('Otherwise', rule.otherwise, (otherwise) => onChange({ ...rule, otherwise }))}
-            <SmallButton disabled={surfaces.length === 0} onClick={() => onChange({ ...rule, values: [...rule.values, { surface: surfaces[0].id, value: rule.otherwise }] })}>
+            <PanelButton disabled={surfaces.length === 0} onClick={() => onChange({ ...rule, values: [...rule.values, { surface: surfaces[0].id, value: rule.otherwise }] })}>
               <Plus className="size-3" /> Horizon
-            </SmallButton>
+            </PanelButton>
           </span>
         </span>
       );
@@ -443,23 +373,15 @@ function ConditionCell({ value, onChange, carries }: { value: number | null; onC
   const on = value !== null && !carries;
   return (
     <span className="flex items-center gap-2" title={carries ? 'One wall carries straight on from here, so there is no line to condition' : undefined}>
-      <Checkbox className="after:inset-0" checked={on} disabled={carries} aria-label="Condition this line" onCheckedChange={(ticked) => onChange(ticked === true ? usualTolerance : null)} />
-      <NumberBox width="w-12" value={on ? value : null} disabled={!on} title="How far the line may move in plan (m): 0.1 is usual, 2 at most" onChange={onChange} />
+      <Check className="after:inset-0" checked={on} disabled={carries} label="Condition this line" onChange={(ticked) => onChange(ticked ? usualTolerance : null)} />
+      <NumberOrBlank blank="" width="w-12" value={on ? value : null} disabled={!on} label="How far the line may move in plan (m): 0.1 is usual, 2 at most" onChange={whenNumber(onChange)} />
     </span>
   );
 }
 
 function RegisterCell({ checked, onChange }: { checked: boolean; onChange?: (v: boolean) => void }) {
   const locked = !onChange;
-  return <Checkbox className="after:inset-0" checked={checked} disabled={locked} title={locked ? 'A wall always stops on its target, with a vertex at every triangle it crosses' : 'Follow the surface. Unticked, the line keeps the heights of its crest'} aria-label="Register" onCheckedChange={(ticked) => onChange?.(ticked === true)} />;
-}
-
-function SurfaceOptions({ surfaces }: { surfaces: ObjectSummary[] }) {
-  return surfaces.map((s) => (
-    <option key={s.id} value={s.id}>
-      {s.name}
-    </option>
-  ));
+  return <Check className="after:inset-0" checked={checked} disabled={locked} title={locked ? 'A wall always stops on its target, with a vertex at every triangle it crosses' : 'Follow the surface. Unticked, the line keeps the heights of its crest'} label="Register" onChange={(ticked) => onChange?.(ticked)} />;
 }
 
 /** One step of a profile. A row says where it finishes: a wall's target, or the surface a berm's line registers on. */
@@ -485,12 +407,12 @@ function StepRow({ number, step, surfaces, rules, above, carries, ramps, bridged
       <td className={cellClass}>
         <Select className={`${selectClass} w-full max-w-36`} value={surfaceValue} aria-label="Surface" disabled={held} onChange={(e) => setSurface(e.target.value)}>
           {step.step === 'berm' && <option value="">{above} (as above)</option>}
-          <SurfaceOptions surfaces={surfaces} />
+          <TargetOptions surfaces={surfaces} />
           {(step.step === 'project' || target?.kind === 'rl') && <option value="rl">–</option>}
         </Select>
       </td>
       <td className={cellClass}>
-        <NumberBox width="w-14" value={target?.kind === 'rl' ? target.rl : null} title="RL" disabled={held} onChange={setRl} />
+        <NumberOrBlank blank="" width="w-14" value={target?.kind === 'rl' ? target.rl : null} label="RL" disabled={held} onChange={whenNumber(setRl)} />
       </td>
       <td className={cellClass}>
         {step.step === 'project' ? (
@@ -500,7 +422,7 @@ function StepRow({ number, step, surfaces, rules, above, carries, ramps, bridged
         )}
       </td>
       <td className={cellClass}>
-        {step.step === 'berm' && <NumberBox width="w-12" value={step.min_bench ?? null} title="No berm where the wall below it is lower than this (m). Blank or 0 is off" onChange={(height) => onChange({ ...step, min_bench: height > 0 ? height : null })} />}
+        {step.step === 'berm' && <NumberOrBlank blank="" width="w-12" value={step.min_bench ?? null} label="No berm where the wall below it is lower than this (m). Blank or 0 is off" onChange={(height) => onChange({ ...step, min_bench: height !== null && height > 0 ? height : null })} />}
       </td>
       {ramps.map(({ name }) => (
         <td key={name} className="px-0.5 py-0.5">
@@ -536,21 +458,21 @@ function StepRow({ number, step, surfaces, rules, above, carries, ramps, bridged
         )}
         {hand && (
           <IconButton
-            title={hand.tip}
+            label={hand.tip}
             disabled={!hand.edited && !!hand.why}
             onClick={hand.onEdit}
           >
             <Pencil className={`size-3 ${hand.edited ? 'text-primary' : ''}`} />
           </IconButton>
         )}
-        <IconButton title="Move up" onClick={() => onMove(-1)}>
+        <IconButton label="Move up" onClick={() => onMove(-1)}>
           <ArrowUp className="size-3" />
         </IconButton>
-        <IconButton title="Move down" onClick={() => onMove(1)}>
+        <IconButton label="Move down" onClick={() => onMove(1)}>
           <ArrowDown className="size-3" />
         </IconButton>
         <IconButton
-          title={hand ? 'Remove this step and every step after it, which build on it (Shift+click: just this one)' : 'Remove this step'}
+          label={hand ? 'Remove this step and every step after it, which build on it (Shift+click: just this one)' : 'Remove this step'}
           onClick={(e) => onRemove(e.shiftKey)}
         >
           <Trash2 className="size-3" />
@@ -627,16 +549,16 @@ function RampRow({ ramp, stringName, placed, onWalls, waits, turns, results, swa
         </span>
         {placed ? (
           <>
-            <button type="button" className="truncate hover:text-primary" title="Where the road starts, measured along the string the design runs on. Click to light up its marker" onClick={onShow}>
+            <TextButton tone="plain" className="truncate" title="Where the road starts, measured along the string the design runs on. Click to light up its marker" onClick={onShow}>
               Starts {Math.round(placed.metres).toLocaleString()} m along {placed.line}
               {placed.from !== null && `, up from step ${placed.from}`}
-            </button>
-            <SmallButton disabled={!onMove} title="Click a new start on the line, then the way the road runs" onClick={() => onMove?.()}>
+            </TextButton>
+            <PanelButton disabled={!onMove} title="Click a new start on the line, then the way the road runs" onClick={() => onMove?.()}>
               <Move className="size-3" /> Move
-            </SmallButton>
-            <SmallButton title={`Climbs ${placed.climbs}. Click to climb ${placed.flipped} instead, from the same start`} onClick={flip}>
+            </PanelButton>
+            <PanelButton title={`Climbs ${placed.climbs}. Click to climb ${placed.flipped} instead, from the same start`} onClick={flip}>
               <ArrowLeftRight className="size-3" /> Climbs {placed.climbs}
-            </SmallButton>
+            </PanelButton>
           </>
         ) : (
           <>
@@ -658,15 +580,15 @@ function RampRow({ ramp, stringName, placed, onWalls, waits, turns, results, swa
             ) : (
               <>
                 <span className="text-muted-foreground">where</span>
-                <button type="button" className={`max-w-36 truncate hover:text-primary ${stringName ? '' : 'text-primary'}`} title={stringName ? `The string across the strips. Click to light it up, then drag its vertices and run again` : 'Its string has gone'} onClick={onShow}>
+                <TextButton tone={stringName ? 'plain' : 'primary'} className="max-w-36 truncate" title={stringName ? `The string across the strips. Click to light it up, then drag its vertices and run again` : 'Its string has gone'} onClick={onShow}>
                   {stringName ?? 'String gone'}
-                </button>
-                <IconButton title="Use the string selected in the viewport instead. It has to run across the strips, so a strip itself can't be one" disabled={!swap} onClick={() => swap?.()}>
+                </TextButton>
+                <IconButton label="Use the string selected in the viewport instead. It has to run across the strips, so a strip itself can't be one" disabled={!swap} onClick={() => swap?.()}>
                   <Crosshair className="size-3" />
                 </IconButton>
                 <span className="text-muted-foreground">crosses, climbing</span>
                 <span title="Along: the way each strip's string runs, from its first vertex to its last. Back: the other way">
-                  <Choice value={ramp.heading} options={HEADINGS} onChange={(heading) => onChange({ heading })} />
+                  <Choice value={ramp.heading} options={HEADINGS} labels={{ along: 'Along', back: 'Back' }} label="Which way the road climbs along the string" onChange={(heading) => onChange({ heading })} />
                 </span>
               </>
             )}
@@ -682,44 +604,47 @@ function RampRow({ ramp, stringName, placed, onWalls, waits, turns, results, swa
           <option value="after">After berm</option>
           <option value="through">Through berm</option>
         </Select>
-        <Labelled label="Width, m">
-          <NumberBox width="w-12" value={ramp.width} title="Road width in metres, square to the road" onChange={(width) => onChange({ width })} />
-        </Labelled>
-        <Labelled label="Grade, %">
-          <NumberBox width="w-12" value={ramp.grade} title="Rise over plan run in percent, on the pit-side edge" onChange={(grade) => onChange({ grade })} />
-        </Labelled>
+        <InlineField label="Width, m">
+          <NumberOrBlank blank="" width="w-12" value={ramp.width} label="Road width in metres, square to the road" onChange={whenNumber((width) => onChange({ width }))} />
+        </InlineField>
+        <InlineField label="Grade, %">
+          <NumberOrBlank blank="" width="w-12" value={ramp.grade} label="Rise over plan run in percent, on the pit-side edge" onChange={whenNumber((grade) => onChange({ grade }))} />
+        </InlineField>
         {turns && (
-          <Labelled label="Join, m">
-            <NumberBox
+          <InlineField label="Join, m">
+            <NumberOrBlank
+              blank=""
               width="w-12"
               value={ramp.turn_join ?? usualTurnJoin}
-              title="Where the road turns back with no box (a flat of 0), how far on from the turn, along the road, the toe of the wall above runs straight back to the berm's line from the next road's corner, in metres. Longer than the line goes on, it runs to the end of the string"
-              onChange={(turn_join) => onChange({ turn_join })}
+              label="Where the road turns back with no box (a flat of 0), how far on from the turn, along the road, the toe of the wall above runs straight back to the berm's line from the next road's corner, in metres. Longer than the line goes on, it runs to the end of the string"
+              onChange={whenNumber((turn_join) => onChange({ turn_join }))}
             />
-          </Labelled>
+          </InlineField>
         )}
         {turns && (
-          <Labelled label="Flat, m">
-            <NumberBox
+          <InlineField label="Flat, m">
+            <NumberOrBlank
+              blank=""
               width="w-12"
               value={ramp.turn_flat ?? ramp.width}
-              title="Where the road turns back, how long the flat box past its top is, in line with it and on the floor on a grid, in metres, for trucks to turn on: the road, the berm and the next road wide. The next road climbs the other way from its near end, straight across the berm from the top, and the wall above goes round the box. The road's width unless you set it; 0 turns at the top with no box"
-              onChange={(turn_flat) => onChange({ turn_flat })}
+              label="Where the road turns back, how long the flat box past its top is, in line with it and on the floor on a grid, in metres, for trucks to turn on: the road, the berm and the next road wide. The next road climbs the other way from its near end, straight across the berm from the top, and the wall above goes round the box. The road's width unless you set it; 0 turns at the top with no box"
+              onChange={whenNumber((turn_flat) => onChange({ turn_flat }))}
             />
-          </Labelled>
+          </InlineField>
         )}
         {turns && (
-          <Labelled label="End, °">
-            <NumberBox
+          <InlineField label="End, °">
+            <NumberOrBlank
+              blank=""
               width="w-12"
               value={ramp.turn_end ?? squareEnd}
-              title="Where the road turns back on a box, the angle in plan between the box's far end and the strip, in degrees, 30 to 90. 90 is square across, the wall above coming straight down the far end. Less flares it out past the box: the wall runs from the box's back corner at that angle out to the berm's line past it, and the ground it leaves is flat like the box. With a 100 m deep box, 45 runs 100 m on past the box"
-              onChange={(turn_end) => onChange({ turn_end })}
+              label="Where the road turns back on a box, the angle in plan between the box's far end and the strip, in degrees, 30 to 90. 90 is square across, the wall above coming straight down the far end. Less flares it out past the box: the wall runs from the box's back corner at that angle out to the berm's line past it, and the ground it leaves is flat like the box. With a 100 m deep box, 45 runs 100 m on past the box"
+              onChange={whenNumber((turn_end) => onChange({ turn_end }))}
             />
-          </Labelled>
+          </InlineField>
         )}
         <span className="ml-auto">
-          <IconButton title="Remove this ramp" onClick={onRemove}>
+          <IconButton label="Remove this ramp" onClick={onRemove}>
             <Trash2 className="size-3" />
           </IconButton>
         </span>
@@ -810,12 +735,12 @@ function StepTable({ profile, surfaces, rules, carryRamps, hand, onChange }: { p
               <td className={`${cellClass} px-2`}>Register</td>
               <td className={cellClass}>
                 <Select className={`${selectClass} w-full max-w-36`} value={register.kind === 'surface' ? register.id : 'rl'} aria-label="Register toe to" title="What the toe registers to: a surface it follows, or – for an RL it lies flat on" onChange={(e) => onChange({ register: e.target.value === 'rl' ? { kind: 'rl', rl: 0 } : { kind: 'surface', id: e.target.value } })}>
-                  <SurfaceOptions surfaces={surfaces} />
+                  <TargetOptions surfaces={surfaces} />
                   <option value="rl">–</option>
                 </Select>
               </td>
               <td className={cellClass}>
-                <NumberBox width="w-14" value={register.kind === 'rl' ? register.rl : null} title="The RL the toe lies flat on" onChange={(rl) => onChange({ register: { kind: 'rl', rl } })} />
+                <NumberOrBlank blank="" width="w-14" value={register.kind === 'rl' ? register.rl : null} label="The RL the toe lies flat on" onChange={whenNumber((rl) => onChange({ register: { kind: 'rl', rl } }))} />
               </td>
               <td />
               <td />
@@ -865,12 +790,12 @@ function StepTable({ profile, surfaces, rules, carryRamps, hand, onChange }: { p
         </table>
       </div>
       <div className="flex items-center gap-1 pt-1">
-        <SmallButton onClick={() => add('project')}>
+        <PanelButton onClick={() => add('project')}>
           <Plus className="size-3" /> Project
-        </SmallButton>
-        <SmallButton onClick={() => add('berm')}>
+        </PanelButton>
+        <PanelButton onClick={() => add('berm')}>
           <Plus className="size-3" /> Berm
-        </SmallButton>
+        </PanelButton>
       </div>
     </div>
   );
@@ -1039,12 +964,12 @@ export function FaceDesignPanel() {
       <div className="flex h-full flex-col overflow-auto text-xs" data-tool-panel="face">
         <PanelHead line="A face design holds the lines to run, a table of steps for each, and any rules those steps share." />
         <div className="flex items-center gap-2 px-3 pt-2">
-          <SmallButton onClick={start}>
+          <PanelButton onClick={start}>
             <Plus className="size-3" /> New design
-          </SmallButton>
-          <SmallButton disabled={!from} title={stepTitle} onClick={() => void startSteps()}>
+          </PanelButton>
+          <PanelButton disabled={!from} title={stepTitle} onClick={() => void startSteps()}>
             <Footprints className="size-3" /> Step design
-          </SmallButton>
+          </PanelButton>
           {designs.length > 0 && (
             <Select className={selectClass} value="" aria-label="Open a design" onChange={(e) => setId(e.target.value)}>
               <option value="">Open a design</option>
@@ -1392,16 +1317,16 @@ export function FaceDesignPanel() {
             </option>
           ))}
         </Select>
-        <Input className="h-7 min-w-0 flex-1 px-1 text-xs" value={name} aria-label="Design name" onChange={(e) => (setName(e.target.value), setDirty(true))} />
-        <SmallButton onClick={start}>
+        <TextInput className="min-w-0 flex-1" value={name} label="Design name" onChange={(value) => (setName(value), setDirty(true))} />
+        <PanelButton onClick={start}>
           <Plus className="size-3" /> New
-        </SmallButton>
-        <SmallButton disabled={!from} title={stepTitle} onClick={() => void startSteps()}>
+        </PanelButton>
+        <PanelButton disabled={!from} title={stepTitle} onClick={() => void startSteps()}>
           <Footprints className="size-3" /> Steps
-        </SmallButton>
-        <SmallButton onClick={() => void save()} title="Save this design with the project">
+        </PanelButton>
+        <PanelButton onClick={() => void save()} title="Save this design with the project">
           <Save className="size-3" /> Save{dirty ? ' *' : ''}
-        </SmallButton>
+        </PanelButton>
         <ObjectMenu object={open ?? null} what="face design" onDeleted={() => setId(null)} />
       </div>
 
@@ -1411,7 +1336,7 @@ export function FaceDesignPanel() {
         </p>
       )}
 
-      <Heading>1. Lines</Heading>
+      <SectionHead>1. Lines</SectionHead>
       {draft.lines.length > 0 && (
         <div className="px-3">
           <table className="w-full text-xs">
@@ -1448,14 +1373,14 @@ export function FaceDesignPanel() {
                       </Select>
                     </td>
                     <td className="px-1 py-0.5">
-                      <Choice value={line.side} options={SIDES} onChange={(side) => change({ side })} />
+                      <Choice value={line.side} options={SIDES} labels={{ left: 'Left', right: 'Right' }} label="The side of the line the wall goes" onChange={(side) => change({ side })} />
                     </td>
                     <td className="whitespace-nowrap px-1 py-0.5">
-                      <NumberBox width="w-12" value={line.run_on[0]} title="Past the start (m)" onChange={(v) => change({ run_on: [v, line.run_on[1]] })} />{' '}
-                      <NumberBox width="w-12" value={line.run_on[1]} title="Past the end (m)" onChange={(v) => change({ run_on: [line.run_on[0], v] })} />
+                      <NumberOrBlank blank="" width="w-12" value={line.run_on[0]} label="Past the start (m)" onChange={whenNumber((v) => change({ run_on: [v, line.run_on[1]] }))} />{' '}
+                      <NumberOrBlank blank="" width="w-12" value={line.run_on[1]} label="Past the end (m)" onChange={whenNumber((v) => change({ run_on: [line.run_on[0], v] }))} />
                     </td>
                     <td className="py-0.5 text-right">
-                      <IconButton title="Remove this line" onClick={() => edit((d) => ({ ...d, lines: d.lines.filter((_, j) => j !== k) }))}>
+                      <IconButton label="Remove this line" onClick={() => edit((d) => ({ ...d, lines: d.lines.filter((_, j) => j !== k) }))}>
                         <Trash2 className="size-3" />
                       </IconButton>
                     </td>
@@ -1467,13 +1392,13 @@ export function FaceDesignPanel() {
         </div>
       )}
       <div className="flex flex-wrap items-center gap-1 px-3 pt-1">
-        <SmallButton
+        <PanelButton
           disabled={chosen.length === 0}
           title="A line for each string selected. Ctrl-click strings in the viewport, Shift-drag a box round them, or Select shown in the Objects table, to select several"
           onClick={() => chosen.forEach((s) => addLine({ string: s.id }))}
         >
           <Plus className="size-3" /> Apply to selected{chosen.length > 0 ? ` (${chosen.length})` : ''}
-        </SmallButton>
+        </PanelButton>
         <Select className={`${selectClass} max-w-32`} value={addingLayer} aria-label="A layer of strings to add" onChange={(e) => setAddingLayer(e.target.value)}>
           <option value="">A layer…</option>
           {layers.map((l) => (
@@ -1482,24 +1407,24 @@ export function FaceDesignPanel() {
             </option>
           ))}
         </Select>
-        <SmallButton disabled={!addingLayer} title="One line for the layer: each run takes the strings on it at the time" onClick={() => (addLine({ layer: addingLayer }), setAddingLayer(''))}>
+        <PanelButton disabled={!addingLayer} title="One line for the layer: each run takes the strings on it at the time" onClick={() => (addLine({ layer: addingLayer }), setAddingLayer(''))}>
           Apply to layer
-        </SmallButton>
+        </PanelButton>
       </div>
 
-      <Heading
-        action={
+      <SectionHead
+        aside={
           <>
-            <SmallButton onClick={() => addProfile(false)}>New</SmallButton>
-            <SmallButton onClick={() => addProfile(true)}>Copy</SmallButton>
-            <SmallButton disabled={!profile || draft.lines.some((l) => l.profile === profile.name)} title="A profile a line uses can't be removed" onClick={removeProfile}>
+            <PanelButton onClick={() => addProfile(false)}>New</PanelButton>
+            <PanelButton onClick={() => addProfile(true)}>Copy</PanelButton>
+            <PanelButton disabled={!profile || draft.lines.some((l) => l.profile === profile.name)} title="A profile a line uses can't be removed" onClick={removeProfile}>
               Remove
-            </SmallButton>
+            </PanelButton>
           </>
         }
       >
         2. Profile
-      </Heading>
+      </SectionHead>
       {profile && (
         <>
           <div className="flex items-center gap-1 px-3 pb-1 text-xs">
@@ -1508,9 +1433,9 @@ export function FaceDesignPanel() {
                 <option key={p}>{p}</option>
               ))}
             </Select>
-            <Input className="h-7 w-28 px-1 text-xs" value={profile.name} aria-label="Profile name" onChange={(e) => renameProfile(e.target.value)} />
+            <TextInput className="w-28" value={profile.name} label="Profile name" onChange={(value) => renameProfile(value)} />
             <span className="ml-auto text-muted-foreground">Direction</span>
-            <Choice value={profile.direction} options={DIRECTIONS} onChange={(direction) => setProfile({ direction })} />
+            <Choice value={profile.direction} options={DIRECTIONS} labels={{ up: 'Up', down: 'Down' }} label="Which way the profile steps from the toe" onChange={(direction) => setProfile({ direction })} />
           </div>
           <StepTable profile={profile} surfaces={surfaces} rules={draft.rules} carryRamps={stepping} hand={hand} onChange={setProfile} />
           {lineEdits.length > 0 && (
@@ -1521,13 +1446,13 @@ export function FaceDesignPanel() {
                 .map((e) => (
                   <div key={e.row} className="flex items-center gap-1 py-0.5">
                     <span className="w-12 shrink-0 tabular-nums text-muted-foreground">Row {e.row}</span>
-                    <button type="button" className="min-w-0 truncate text-left text-primary hover:underline" title="Select it in the viewport" onClick={() => select(e.string)}>
+                    <TextButton tone="primary" className="min-w-0 truncate" title="Select it in the viewport" onClick={() => select(e.string)}>
                       {nameOf(e.string)}
-                    </button>
-                    <SmallButton disabled={picking} title="Click on your line where the new stretch leaves it, then the new path, then where it comes back onto your line" onClick={() => void redrawStretch(e.row)}>
+                    </TextButton>
+                    <PanelButton disabled={picking} title="Click on your line where the new stretch leaves it, then the new path, then where it comes back onto your line" onClick={() => void redrawStretch(e.row)}>
                       <PenLine className="size-3" /> Redraw a stretch
-                    </SmallButton>
-                    <IconButton title={`Take your line off row ${e.row}: it goes back to the line the steps make`} onClick={() => removeEdit(e.row)}>
+                    </PanelButton>
+                    <IconButton label={`Take your line off row ${e.row}: it goes back to the line the steps make`} onClick={() => removeEdit(e.row)}>
                       <Trash2 className="size-3" />
                     </IconButton>
                   </div>
@@ -1538,14 +1463,14 @@ export function FaceDesignPanel() {
             <div className="flex items-center gap-2 pb-1">
               <span className="text-muted-foreground">Ramps</span>
               {stepping && (
-                <SmallButton disabled={picking || !stepLine} title="Click where the road starts on one of the design's lines, then along the line the way it runs. On a toe or a berm's line it climbs every wall above at once; on the top line it waits, and the next wall you add climbs it. Click it off a wall in its column to stop it there" onClick={() => void placeRamp()}>
+                <PanelButton disabled={picking || !stepLine} title="Click where the road starts on one of the design's lines, then along the line the way it runs. On a toe or a berm's line it climbs every wall above at once; on the top line it waits, and the next wall you add climbs it. Click it off a wall in its column to stop it there" onClick={() => void placeRamp()}>
                   <Plus className="size-3" /> Place ramp
-                </SmallButton>
+                </PanelButton>
               )}
-              <SmallButton disabled={picking || profile.steps.length === 0} title="Then draw a string across the strips. Each line it crosses gets a road" onClick={() => void addRamp()}>
+              <PanelButton disabled={picking || profile.steps.length === 0} title="Then draw a string across the strips. Each line it crosses gets a road" onClick={() => void addRamp()}>
                 <Plus className="size-3" /> Ramp
-              </SmallButton>
-              <SmallButton
+              </PanelButton>
+              <PanelButton
                 disabled={picking || profile.steps.length === 0 || newTops.size === 0}
                 title={
                   newTops.size > 0
@@ -1555,7 +1480,7 @@ export function FaceDesignPanel() {
                 onClick={addFromLine}
               >
                 <Plus className="size-3" /> From the line{newTops.size > 0 ? ` (${newTops.size})` : ''}
-              </SmallButton>
+              </PanelButton>
               {picking && <span className="text-primary">{stepping ? 'Click where the road starts, then the way it runs. Esc cancels.' : 'Click across the strips, a point on each. Enter finishes, Esc cancels.'}</span>}
             </div>
             {(profile.ramps ?? []).map((ramp, k) => (
@@ -1579,15 +1504,15 @@ export function FaceDesignPanel() {
         </>
       )}
 
-      <Heading
-        action={
-          <SmallButton onClick={() => edit((d) => ({ ...d, rules: [...d.rules, { name: freeName('Rule', ruleNames), value: { type: 'fixed', value: 0 } }] }))}>
+      <SectionHead
+        aside={
+          <PanelButton onClick={() => edit((d) => ({ ...d, rules: [...d.rules, { name: freeName('Rule', ruleNames), value: { type: 'fixed', value: 0 } }] }))}>
             <Plus className="size-3" /> Add rule
-          </SmallButton>
+          </PanelButton>
         }
       >
         3. Rules
-      </Heading>
+      </SectionHead>
       <p className="px-3 pb-1 text-xs text-muted-foreground">
         A rule does nothing until a row names it: type or pick its name in that row's Batter / Width in place of a number. A rule can change along a wall, with the flatter batter or wider berm reaching across the change.
       </p>
@@ -1607,7 +1532,7 @@ export function FaceDesignPanel() {
             {draft.rules.map((rule, k) => (
               <tr key={k} className="border-t">
                 <td className="px-1 py-0.5">
-                  <Input className="h-7 w-32 px-1 text-xs" value={rule.name} aria-label="Rule name" onChange={(e) => renameRule(rule.name, e.target.value)} />
+                  <TextInput className="w-32" value={rule.name} label="Rule name" onChange={(value) => renameRule(rule.name, value)} />
                 </td>
                 <td className="px-1 py-0.5 align-top">
                   <Select
@@ -1635,7 +1560,7 @@ export function FaceDesignPanel() {
                   <RuleNote rule={rule} profiles={draft.profiles} />
                 </td>
                 <td className="py-0.5 text-right">
-                  <IconButton title="Remove this rule" disabled={stepValues.includes(rule.name)} onClick={() => edit((d) => ({ ...d, rules: d.rules.filter((_, j) => j !== k) }))}>
+                  <IconButton label="Remove this rule" disabled={stepValues.includes(rule.name)} onClick={() => edit((d) => ({ ...d, rules: d.rules.filter((_, j) => j !== k) }))}>
                     <Trash2 className="size-3" />
                   </IconButton>
                 </td>
@@ -1645,18 +1570,24 @@ export function FaceDesignPanel() {
         </table>
       </div>
 
-      <Heading>4. Run</Heading>
+      <SectionHead>4. Run</SectionHead>
       <div className="flex items-center gap-1 px-3 text-xs">
         <span className="text-muted-foreground">On layer</span>
-        <Input className="h-7 min-w-0 flex-1 px-1 text-xs" value={draft.layer} aria-label="Layer for what a run makes" onChange={(e) => edit((d) => ({ ...d, layer: e.target.value }))} />
-        <Button size="sm" className="h-7 gap-1 px-2 text-xs" onClick={() => void runAll()}>
+        <TextInput className="min-w-0 flex-1" value={draft.layer} label="Layer for what a run makes" onChange={(value) => edit((d) => ({ ...d, layer: value }))} />
+        <PanelButton variant="default" onClick={() => void runAll()}>
           <Play className="size-3" /> Run all lines
-        </Button>
+        </PanelButton>
       </div>
-      <label className="flex items-center gap-2 px-3 pt-2 text-xs" title="Save and run the design a moment after each change, one undo a step: a design built by hand a step at a time. Best on a design with one line, as every line runs each time">
-        <Checkbox checked={stepping} disabled={!id} aria-label="Run each step" onCheckedChange={(ticked) => setStepping(ticked === true)} />
+      <Check
+        className="gap-2 px-3 pt-2 text-xs"
+        checked={stepping}
+        disabled={!id}
+        label="Run each step"
+        title="Save and run the design a moment after each change, one undo a step: a design built by hand a step at a time. Best on a design with one line, as every line runs each time"
+        onChange={setStepping}
+      >
         Run each step{!id && ' (save the design first)'}
-      </label>
+      </Check>
       {report.error && <p className="whitespace-pre-line px-3 pt-2 text-xs text-destructive">{report.error}</p>}
       {report.notes
         .filter((note) => !rampLine(note.text))

@@ -1,7 +1,7 @@
 import { Braces, Save, Undo2 } from 'lucide-react';
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { type DataflowState, objectDetails, type ParameterTable, type RowDataflowAtStep, rowDataflowStep } from '@/bridge';
-import { StatusBadge } from '@/design-system/kit';
+import { ok, refused, type Said, SaidLine, StatusBadge, TextButton } from '@/design-system/kit';
 import { Button } from '@/design-system/ui/button';
 import { cn } from 'cn';
 import { useWorkspace } from '@/workspace/context';
@@ -30,7 +30,7 @@ export function RowDataflowView({ table, dataflow }: { table: { id: string; name
   const [view, setView] = useState<RowDataflowAtStep | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [params, setParams] = useState<Record<string, ParameterTable>>({});
-  const [said, setSaid] = useState<{ text: string; refused: boolean } | null>(null);
+  const [said, setSaid] = useState<Said | null>(null);
   const [saving, setSaving] = useState(false);
   const changed = (summary?.objects ?? []).map((o) => `${o.id}:${o.revision}`).join(',');
 
@@ -120,13 +120,13 @@ export function RowDataflowView({ table, dataflow }: { table: { id: string; name
       for (const [id, t] of edits.tables) {
         const name = view?.tables.find(([x]) => x === id)?.[1] ?? id;
         const reply = await runRecord('parameters.save', { table: id, name, content: t });
-        if (reply.error) return setSaid({ text: `${name}: ${reply.error}`, refused: true });
+        if (reply.error) return setSaid(refused(`${name}: ${reply.error}`));
         setDraft(id, null);
       }
       const reply = await runRecord('table.run_dataflow', { table: table.id, dataflow: dataflow.dataflow });
-      setSaid(reply.error ? { text: reply.error, refused: true } : { text: `Saved, and ${dataflow.name} run on ${table.name}.`, refused: false });
+      setSaid(reply.error ? refused(reply.error) : ok(`Saved, and ${dataflow.name} run on ${table.name}.`));
     } catch (e) {
-      setSaid({ text: String(e), refused: true });
+      setSaid(refused(String(e)));
     } finally {
       setSaving(false);
     }
@@ -187,9 +187,9 @@ export function RowDataflowView({ table, dataflow }: { table: { id: string; name
                   </StatusBadge>
                 )}
               </div>
-              <button type="button" className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground hover:underline" onClick={() => openTool('params', `formula:${dataflow.dataflow}:${cell.name}`)}>
+              <TextButton className="gap-1" onClick={() => openTool('params', `formula:${dataflow.dataflow}:${cell.name}`)}>
                 <Braces className="size-3" /> Open its script in the formula panel
-              </button>
+              </TextButton>
               <div className="grid grid-cols-[3.5rem_1fr] gap-x-2 gap-y-0.5">
                 <span className="text-muted-foreground">Reads</span>
                 <span>
@@ -248,7 +248,7 @@ export function RowDataflowView({ table, dataflow }: { table: { id: string; name
                 )}
                 <span className={cn(edits.any ? 'text-edited' : 'text-muted-foreground')}>{edits.any ? `Unsaved: ${dataflow.name} runs again as you type (${Math.round(view.ms)} ms).` : 'Type a setting to see it run again.'}</span>
               </div>
-              {said && <div className={said.refused ? 'text-destructive' : 'text-ok'}>{said.text}</div>}
+              <SaidLine said={said} />
               {view.stopped.map((s) => (
                 <div key={s} className="text-destructive">
                   {s}

@@ -2,8 +2,7 @@ import { Combine, Grid3x3, Layers, Rows3, Slice } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { concealed, checkCutByPolygons, checkCutBySeams, checkSlice, type Note, type ObjectSummary, type StepTarget, solidsTable } from '@/bridge';
 import { Button } from '@/design-system/ui/button';
-import { Input } from '@/design-system/ui/input';
-import { type Asker, AskSteps, Choice, Field, NoteLine, NumberInput, type RunReport, Select, TargetInput, TargetOptions, type ToolAction, ToolPanel, ToolSection, useAsking } from '@/design-system/kit';
+import { type Asker, AskSteps, Choice, Field, NoteLine, NumberInput, type RunReport, Select, TargetInput, TargetOptions, TextInput, type ToolAction, ToolPanel, ToolSection, useAsking } from '@/design-system/kit';
 import { choiceWords } from '@/tools';
 import { useWorkspace } from '@/workspace/context';
 import { BenchRulesSection } from './BenchRulesSection';
@@ -421,16 +420,16 @@ export function CutPanel() {
   const outputSection = (
     <ToolSection title="Output">
       <Field label="To layer" hint={mode === 'benches' ? "Where a rule names no layer of its own" : undefined}>
-        <Input className="h-7 w-40 px-1.5 text-xs" value={outputs[mode]} aria-label="Layer for what's made" onChange={(e) => setOutput(e.target.value)} />
+        <TextInput className="w-40" value={outputs[mode]} label="Layer for what's made" onChange={(value) => setOutput(value)} />
       </Field>
       {mode === 'between' && (
         <Field label="Name">
-          <Input className="h-7 w-40 px-1.5 text-xs" value={name} aria-label="Name of the solid" onChange={(e) => setName(e.target.value)} />
+          <TextInput className="w-40" value={name} label="Name of the solid" onChange={(value) => setName(value)} />
         </Field>
       )}
       {named && (
         <Field label="Names" hint="Attributes in braces, {solid} for the solid's name; one a piece hasn't is left out with the separator before it">
-          <Input className="h-7 w-40 px-1.5 text-xs" value={pattern} aria-label="Name of each piece" onChange={(e) => setPattern(e.target.value)} />
+          <TextInput className="w-40" value={pattern} label="Name of each piece" onChange={(value) => setPattern(value)} />
         </Field>
       )}
     </ToolSection>

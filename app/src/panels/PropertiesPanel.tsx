@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Check, Copy, Focus, Minus, Trash2, X } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Check, Copy, Focus, Trash2 } from 'lucide-react';
 import {
   type AddUp,
   type Colouring,
@@ -21,29 +21,10 @@ import {
 import { columnHelper, DataTable } from '@/design-system/DataTable';
 import { Badge } from '@/design-system/ui/badge';
 import { Button } from '@/design-system/ui/button';
-import { Input } from '@/design-system/ui/input';
 import { ScrollArea } from '@/design-system/ui/scroll-area';
-import { Choice as KitChoice } from '@/design-system/kit';
+import { Choice as KitChoice, Field, FlagBadge, NumberInput, PanelButton, PanelHead, PercentSlider, quiet, type Said, SaidLine, ShownRow, ShownSection, TextInput } from '@/design-system/kit';
 import { useWorkspace } from '@/workspace/context';
 import { canColour, canSeeThrough, clock, coord, fmt, kindLabel } from './format';
-
-function Section({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section className="border-b py-2">
-      <h3 className="px-3 pb-1 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">{title}</h3>
-      {children}
-    </section>
-  );
-}
-
-function Field({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="grid grid-cols-[7.5rem_1fr] gap-2 px-3 py-0.5 text-xs">
-      <span className="text-muted-foreground">{label}</span>
-      <span className="min-w-0 truncate tabular-nums">{children}</span>
-    </div>
-  );
-}
 
 /**
  * The object's own 128-bit id, as 32 hex digits, with a button that copies it: what tells two objects of one name apart,
@@ -52,8 +33,7 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 function IdField({ id }: { id: string }) {
   const [copied, setCopied] = useState(false);
   return (
-    <div className="grid grid-cols-[7.5rem_1fr] items-center gap-2 px-3 py-0.5 text-xs">
-      <span className="text-muted-foreground">Id</span>
+    <ShownRow label="Id">
       <span className="flex min-w-0 items-center gap-1">
         <span data-slot="object-id" className="min-w-0 truncate font-mono text-[11px]" title={id}>
           {id}
@@ -76,19 +56,7 @@ function IdField({ id }: { id: string }) {
           {copied ? <Check /> : <Copy />}
         </Button>
       </span>
-    </div>
-  );
-}
-
-/** One validity flag: green when it holds, red when it does not, grey when not computed. */
-function Flag({ label, value, detail }: { label: string; value: boolean | null; detail?: string }) {
-  const Icon = value === null ? Minus : value ? Check : X;
-  const tone = value === null ? 'text-muted-foreground' : value ? 'text-ok' : 'text-destructive';
-  return (
-    <Badge variant="outline" className="gap-1 font-normal" title={detail}>
-      <Icon className={`size-3 ${tone}`} />
-      {label}
-    </Badge>
+    </ShownRow>
   );
 }
 
@@ -104,11 +72,11 @@ function crossingText(c: Crossings | null): string {
 function Validity({ v, crossings }: { v: MeshValidity; crossings: Crossings | null }) {
   return (
     <div className="flex flex-wrap gap-1 px-3 pt-1">
-      <Flag label="Closed" value={v.closed} detail={`${fmt(v.boundary_edges)} boundary edges`} />
-      <Flag label="Manifold" value={v.manifold} detail={`${fmt(v.non_manifold_edges)} non-manifold edges`} />
-      <Flag label="Consistent winding" value={v.consistent_winding} detail={`${fmt(v.inconsistent_edges)} inconsistently wound edges`} />
-      <Flag label="Non-degenerate" value={v.non_degenerate} detail={`${fmt(v.degenerate_triangles)} degenerate triangles`} />
-      <Flag label="Non-self-intersecting" value={v.non_self_intersecting} detail={crossingText(crossings)} />
+      <FlagBadge label="Closed" value={v.closed} detail={`${fmt(v.boundary_edges)} boundary edges`} />
+      <FlagBadge label="Manifold" value={v.manifold} detail={`${fmt(v.non_manifold_edges)} non-manifold edges`} />
+      <FlagBadge label="Consistent winding" value={v.consistent_winding} detail={`${fmt(v.inconsistent_edges)} inconsistently wound edges`} />
+      <FlagBadge label="Non-degenerate" value={v.non_degenerate} detail={`${fmt(v.degenerate_triangles)} degenerate triangles`} />
+      <FlagBadge label="Non-self-intersecting" value={v.non_self_intersecting} detail={crossingText(crossings)} />
     </div>
   );
 }
@@ -121,7 +89,7 @@ function CrossingSites({ crossings }: { crossings: Crossings }) {
     return () => markCrossings([]);
   }, [crossings, markCrossings]);
   return (
-    <Section title="Crossings">
+    <ShownSection title="Crossings">
       <p className="px-3 pb-1 text-xs text-destructive">
         {crossingText(crossings)}. Cuts refuse this mesh until it is fixed at source.
         {crossings.pairs > crossings.at.length && ` The first ${fmt(crossings.at.length)} are listed.`}
@@ -133,7 +101,7 @@ function CrossingSites({ crossings }: { crossings: Crossings }) {
           </li>
         ))}
       </ul>
-    </Section>
+    </ShownSection>
   );
 }
 
@@ -151,7 +119,7 @@ function ThinSites({ crossings }: { crossings: Crossings }) {
   }, [crossings, marked, markCrossings]);
   const tolerance = crossings.check.by === 'lattice' ? '' : ` ${fmt(crossings.check.tolerance * 1000, 1)} mm`;
   return (
-    <Section title="Thin">
+    <ShownSection title="Thin">
       <p className="px-3 pb-1 text-xs text-muted-foreground">
         {fmt(crossings.thin)} pairs of faces within{tolerance} of each other: the solid tapers to a knife edge, comes within a hairline
         of itself or has a thin lip there. Not crossings; kept as they are.
@@ -164,7 +132,7 @@ function ThinSites({ crossings }: { crossings: Crossings }) {
           </li>
         ))}
       </ul>
-    </Section>
+    </ShownSection>
   );
 }
 
@@ -205,95 +173,6 @@ function Vertices({ points, closed }: { points: Vec3[]; closed: boolean }) {
   return <DataTable data={rows} columns={vertexColumns} rowId={(r) => String(r.index)} />;
 }
 
-/** One row of a tool: a label, its inputs, and the button that runs the command, if it has one. */
-function ToolRow({
-  label,
-  children,
-  onApply,
-  apply = 'Apply',
-  disabled,
-}: {
-  label: string;
-  children?: ReactNode;
-  onApply?: () => void;
-  apply?: string;
-  disabled?: boolean;
-}) {
-  return (
-    <div className="flex items-center gap-1 px-3 py-0.5 text-xs">
-      <span className="w-14 shrink-0 text-muted-foreground">{label}</span>
-      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">{children}</div>
-      {onApply && (
-        <Button variant="outline" size="sm" className="h-6 px-2 text-xs" disabled={disabled} onClick={onApply}>
-          {apply}
-        </Button>
-      )}
-    </div>
-  );
-}
-
-function SmallInput({ value, onChange, placeholder, title }: { value: string; onChange: (v: string) => void; placeholder: string; title: string }) {
-  return (
-    <Input
-      className="h-6 w-16 px-1 text-xs tabular-nums"
-      value={value}
-      placeholder={placeholder}
-      title={title}
-      aria-label={title}
-      onChange={(e) => onChange(e.target.value)}
-    />
-  );
-}
-
-/** A choice as a row of small buttons. */
-function Choice<T extends string>({ value, options, onChange }: { value: T; options: [T, string][]; onChange: (v: T) => void }) {
-  return (
-    <span className="inline-flex rounded border">
-      {options.map(([v, label]) => (
-        <button key={v} className={`px-1.5 py-0.5 ${v === value ? 'bg-selection text-primary' : 'text-muted-foreground'}`} onClick={() => onChange(v)}>
-          {label}
-        </button>
-      ))}
-    </span>
-  );
-}
-
-/**
- * An opacity from 5 to 100 %. It shows as it moves and is kept when it's let go, so a drag is one change
- * to the project, not one per step.
- */
-function OpacitySlider({ value, label, onChange }: { value: number; label: string; onChange: (opacity: number, commit: boolean) => void }) {
-  const [moving, setMoving] = useState<number | null>(null);
-  const shown = moving ?? value;
-  const commit = () => {
-    if (moving !== null) onChange(moving, true);
-    setMoving(null);
-  };
-  return (
-    <div className="grid grid-cols-[7.5rem_1fr_2.5rem] items-center gap-2 px-3 py-0.5 text-xs">
-      <span className="text-muted-foreground">{label}</span>
-      <input
-        type="range"
-        min={5}
-        max={100}
-        step={5}
-        value={Math.round(shown * 100)}
-        aria-label={label}
-        className="h-4 min-w-0 accent-primary"
-        onChange={(e) => {
-          const next = Number(e.target.value) / 100;
-          setMoving(next);
-          onChange(next, false);
-        }}
-        onPointerUp={commit}
-        onKeyUp={commit}
-        onBlur={commit}
-      />
-      <span className="text-right tabular-nums">{Math.round(shown * 100)}%</span>
-    </div>
-  );
-}
-
 /**
  * How the selected object draws: by RL or in its layer's colour, and how see-through, its own and its
  * layer's (they multiply). Display only: saved with the project, not undone. A layer's solids draw as one
@@ -305,26 +184,16 @@ function Look({ object }: { object: ObjectSummary }) {
   const solid = object.kind === 'solid';
   const seam = object.kind === 'seam_model';
   return (
-    <Section title="Look">
+    <ShownSection title="Look">
       {!solid && !seam && (
-        <div className="grid grid-cols-[7.5rem_1fr] items-center gap-2 px-3 py-0.5 text-xs">
-          <span className="text-muted-foreground">Colour</span>
-          <span>
-            <Choice
-              value={look.colouring}
-              options={[
-                ['by_rl', 'By RL'],
-                ['layer', 'Layer colour'],
-              ]}
-              onChange={(colouring) => setLooks([object.id], colouring, null)}
-            />
-          </span>
-        </div>
+        <ShownRow label="Colour">
+          <KitChoice<Colouring> value={look.colouring} options={['by_rl', 'layer']} labels={{ by_rl: 'By RL', layer: 'Layer colour' }} label="How it's coloured" onChange={(colouring) => setLooks([object.id], colouring, null)} />
+        </ShownRow>
       )}
-      {!solid && <OpacitySlider label="Opacity" value={look.opacity} onChange={(o, commit) => setLooks([object.id], null, o, commit)} />}
-      <OpacitySlider label="Layer opacity" value={layerOpacityOf(summary?.display, object.layer)} onChange={(o, commit) => setLayerOpacity(object.layer, o, commit)} />
+      {!solid && <PercentSlider label="Opacity" value={look.opacity} onChange={(o, commit) => setLooks([object.id], null, o, commit)} />}
+      <PercentSlider label="Layer opacity" value={layerOpacityOf(summary?.display, object.layer)} onChange={(o, commit) => setLayerOpacity(object.layer, o, commit)} />
       {solid && <p className="px-3 pt-0.5 text-xs text-muted-foreground">A layer's solids draw together, so they're seen through by the layer.</p>}
-    </Section>
+    </ShownSection>
   );
 }
 
@@ -335,9 +204,9 @@ function OpenCut() {
   return (
     <div className="flex items-center gap-2 px-3 py-1 text-xs text-muted-foreground">
       Cut it, or slice it into strips, in
-      <Button variant="outline" size="sm" className="h-6 px-2 text-xs" onClick={() => openPanel('cut')}>
+      <PanelButton row onClick={() => openPanel('cut')}>
         Cut solids
-      </Button>
+      </PanelButton>
     </div>
   );
 }
@@ -486,19 +355,19 @@ function DataflowView({ flow }: { flow: Dataflow }) {
   const steps = flow.steps.map((s) => (s.on === false ? `${s.step} (off)` : s.step));
   return (
     <>
-      <Section title="Dataflow">
-        <Field label="Levels">{(flow.levels ?? []).map((l) => (l.default ? `${l.attribute} (else ${l.default})` : l.attribute)).join(' › ') || 'pit › strip › block › seam › bench'}</Field>
-        <Field label="Steps">{steps.join(', ') || 'none'}</Field>
-        <Field label="Parameter tables">{flow.parameters.map((id) => names.get(id) ?? 'missing').join(', ') || 'none'}</Field>
-        <Field label="Fields">{fmt(flow.fields.length)}</Field>
-      </Section>
-      <Section title="Fields">
+      <ShownSection title="Dataflow">
+        <ShownRow label="Levels">{(flow.levels ?? []).map((l) => (l.default ? `${l.attribute} (else ${l.default})` : l.attribute)).join(' › ') || 'pit › strip › block › seam › bench'}</ShownRow>
+        <ShownRow label="Steps">{steps.join(', ') || 'none'}</ShownRow>
+        <ShownRow label="Parameter tables">{flow.parameters.map((id) => names.get(id) ?? 'missing').join(', ') || 'none'}</ShownRow>
+        <ShownRow label="Fields">{fmt(flow.fields.length)}</ShownRow>
+      </ShownSection>
+      <ShownSection title="Fields">
         <CellTable headers={['Field', 'Kind', 'Adds up', 'From']} rows={flow.fields.map((f) => [f.name, f.kind, addUpWords(f.add_up), fromWords(f)])} />
-      </Section>
+      </ShownSection>
       {(flow.words ?? []).length > 0 && (
-        <Section title="Word fields">
+        <ShownSection title="Word fields">
           <CellTable headers={['Field', 'From']} rows={(flow.words ?? []).map((w) => [w.name, w.from === 'attribute' ? `attribute ${w.attribute ?? ''}` : w.from === 'parameter' ? `parameter column ${w.column ?? ''}` : 'worked by a step'])} />
-        </Section>
+        </ShownSection>
       )}
     </>
   );
@@ -511,13 +380,13 @@ function WriteView({ w }: { w: WriteFigures }) {
   const line = (r: WriteFigures['seams'][number]) => [r.label, r.material, ...r.values.map(cell), fmt(r.rows)];
   return (
     <>
-      <Section title={`${w.write} by seam`}>
+      <ShownSection title={`${w.write} by seam`}>
         <CellTable headers={['Seam', 'Folder', ...heads, 'Leaves']} rows={[...w.seams, ...w.totals].map(line)} />
-      </Section>
+      </ShownSection>
       {w.benches.length > 0 && (
-        <Section title={`${w.write} by bench`}>
+        <ShownSection title={`${w.write} by bench`}>
           <CellTable headers={['Bench', 'Folder', ...heads, 'Leaves']} rows={w.benches.map(line)} />
-        </Section>
+        </ShownSection>
       )}
     </>
   );
@@ -529,62 +398,62 @@ function Measurements({ d }: { d: ObjectDetails }) {
     case 'string':
       return (
         <>
-          <Section title="String">
-            <Field label="Vertices">{fmt(m.points.length)}</Field>
-            <Field label="Closed">{m.closed ? 'Yes' : 'No'}</Field>
-            <Field label="Length (slope)">{fmt(m.length, 2)} m</Field>
-            <Field label="Length (plan)">{fmt(m.plan_length, 2)} m</Field>
-            {m.plan_area !== null && <Field label="Area (plan)">{fmt(m.plan_area, 1)} m²</Field>}
-          </Section>
-          <Section title="Vertices">
+          <ShownSection title="String">
+            <ShownRow label="Vertices">{fmt(m.points.length)}</ShownRow>
+            <ShownRow label="Closed">{m.closed ? 'Yes' : 'No'}</ShownRow>
+            <ShownRow label="Length (slope)">{fmt(m.length, 2)} m</ShownRow>
+            <ShownRow label="Length (plan)">{fmt(m.plan_length, 2)} m</ShownRow>
+            {m.plan_area !== null && <ShownRow label="Area (plan)">{fmt(m.plan_area, 1)} m²</ShownRow>}
+          </ShownSection>
+          <ShownSection title="Vertices">
             <Vertices points={m.points} closed={m.closed} />
-          </Section>
+          </ShownSection>
         </>
       );
     case 'surface':
     case 'solid':
       return (
         <>
-          <Section title={m.kind === 'solid' ? 'Solid' : 'Surface'}>
-            <Field label="Triangles">{fmt(m.triangles)}</Field>
-            <Field label="Vertices">{fmt(m.vertices)}</Field>
-            <Field label="Area">{fmt(m.area, 1)} m²</Field>
-            {m.kind === 'solid' && <Field label="Volume">{fmt(m.volume, 1)} m³</Field>}
+          <ShownSection title={m.kind === 'solid' ? 'Solid' : 'Surface'}>
+            <ShownRow label="Triangles">{fmt(m.triangles)}</ShownRow>
+            <ShownRow label="Vertices">{fmt(m.vertices)}</ShownRow>
+            <ShownRow label="Area">{fmt(m.area, 1)} m²</ShownRow>
+            {m.kind === 'solid' && <ShownRow label="Volume">{fmt(m.volume, 1)} m³</ShownRow>}
             {m.kind === 'solid' && m.pieces.pieces > 1 && (
-              <Field label="Pieces">
+              <ShownRow label="Pieces">
                 {fmt(m.pieces.pieces)}, the smallest {fmt(m.pieces.smallest_piece, m.pieces.smallest_piece < 10 ? 3 : 1)} m³
-              </Field>
+              </ShownRow>
             )}
             {m.kind === 'solid' && m.pieces.cavities > 0 && (
-              <Field label="Cavities">
+              <ShownRow label="Cavities">
                 {fmt(m.pieces.cavities)}, {fmt(m.pieces.cavity_volume, m.pieces.cavity_volume < 10 ? 3 : 1)} m³ in all
-              </Field>
+              </ShownRow>
             )}
             <Validity v={m.validity} crossings={m.crossings} />
             {m.crossings && m.crossings.pairs > 0 && <CrossingSites crossings={m.crossings} />}
             {m.crossings && m.crossings.thin > 0 && <ThinSites crossings={m.crossings} />}
-          </Section>
+          </ShownSection>
           {m.kind === 'solid' && <OpenCut />}
         </>
       );
     case 'grid': {
       const nodes = m.cols * m.rows;
       return (
-        <Section title="Grid">
-          <Field label="Nodes">
+        <ShownSection title="Grid">
+          <ShownRow label="Nodes">
             {fmt(m.cols)} × {fmt(m.rows)}
-          </Field>
-          <Field label="Cell size">
+          </ShownRow>
+          <ShownRow label="Cell size">
             {fmt(m.cell_size[0], 2)} × {fmt(m.cell_size[1], 2)} m
-          </Field>
-          <Field label="Origin (SW node)">
+          </ShownRow>
+          <ShownRow label="Origin (SW node)">
             {coord(m.origin[0])} E, {coord(m.origin[1])} N
-          </Field>
-          <Field label="Nulls">
+          </ShownRow>
+          <ShownRow label="Nulls">
             {fmt(m.nulls)} ({fmt((100 * m.nulls) / Math.max(nodes, 1), 1)}%)
-          </Field>
-          <Field label="Value range">{m.z_range ? `${fmt(m.z_range[0], 3)} to ${fmt(m.z_range[1], 3)}` : 'all null'}</Field>
-        </Section>
+          </ShownRow>
+          <ShownRow label="Value range">{m.z_range ? `${fmt(m.z_range[0], 3)} to ${fmt(m.z_range[1], 3)}` : 'all null'}</ShownRow>
+        </ShownSection>
       );
     }
     case 'parameter_table': {
@@ -606,20 +475,20 @@ function Measurements({ d }: { d: ObjectDetails }) {
       };
       return (
         <>
-          <Section title="Parameter table">
-            <Field label="Rows">{fmt(t.rows.length)}</Field>
-            <Field label="Filters on">{t.filters.join(', ') || 'nothing'}</Field>
-            <Field label="Values">{t.columns.map((c) => c.name).join(', ')}</Field>
+          <ShownSection title="Parameter table">
+            <ShownRow label="Rows">{fmt(t.rows.length)}</ShownRow>
+            <ShownRow label="Filters on">{t.filters.join(', ') || 'nothing'}</ShownRow>
+            <ShownRow label="Values">{t.columns.map((c) => c.name).join(', ')}</ShownRow>
             <p className="px-3 py-1 text-xs text-muted-foreground">Read top down: each value comes from the first row that fits and holds it; a blank filter fits anything.</p>
             <div className="px-3 py-1">
               <Button size="sm" variant="outline" onClick={saveCsv}>
                 Save as CSV
               </Button>
             </div>
-          </Section>
-          <Section title="Rows">
+          </ShownSection>
+          <ShownSection title="Rows">
             <CellTable headers={headers} rows={rows} />
-          </Section>
+          </ShownSection>
         </>
       );
     }
@@ -627,21 +496,21 @@ function Measurements({ d }: { d: ObjectDetails }) {
       return <DataflowView flow={m.dataflow} />;
     case 'script':
       return (
-        <Section title="Script">
+        <ShownSection title="Script">
           {m.script.note && <p className="px-3 py-1 text-xs text-muted-foreground">{m.script.note}</p>}
           <pre className="mx-3 my-1 overflow-auto rounded bg-muted/40 p-2 font-mono text-[11px]">{m.script.source}</pre>
           <p className="px-3 py-1 text-xs text-muted-foreground">Loaded by its name, load("name", "function"); edited in the Parameters tab.</p>
-        </Section>
+        </ShownSection>
       );
     case 'table':
       return (
         <>
-          <Section title="Reserves table">
-            <Field label="Leaves">{fmt(m.rows)}</Field>
-            <Field label="Columns">{fmt(m.columns.length)}</Field>
-            <Field label="Top folders">{m.figures.writes.map((w) => w.write).join(', ') || 'none'}</Field>
+          <ShownSection title="Reserves table">
+            <ShownRow label="Leaves">{fmt(m.rows)}</ShownRow>
+            <ShownRow label="Columns">{fmt(m.columns.length)}</ShownRow>
+            <ShownRow label="Top folders">{m.figures.writes.map((w) => w.write).join(', ') || 'none'}</ShownRow>
             <p className="px-3 py-1 text-xs text-muted-foreground">Each column added up by its own rule: summed, by volume, by tonnes, the largest or the smallest.</p>
-          </Section>
+          </ShownSection>
           {m.figures.writes.map((w) => (
             <WriteView key={w.write} w={w} />
           ))}
@@ -652,29 +521,29 @@ function Measurements({ d }: { d: ObjectDetails }) {
       const blocking = model.issues.filter((i) => i.blocking).length;
       return (
         <>
-          <Section title="Seam model">
-            <Field label="Horizons">
+          <ShownSection title="Seam model">
+            <ShownRow label="Horizons">
               {fmt(model.horizons.length)} ({fmt(model.horizons.filter((h) => h.working).length)} working)
-            </Field>
-            <Field label="Nodes">
+            </ShownRow>
+            <ShownRow label="Nodes">
               {fmt(model.lattice.cols)} × {fmt(model.lattice.rows)} at {fmt(model.lattice.cell_size[0], 2)} m
-            </Field>
-            <Field label="Grid folder">
+            </ShownRow>
+            <ShownRow label="Grid folder">
               <span title={model.folder}>{model.folder}</span>
-            </Field>
-            <Field label="Density grid">{model.density}</Field>
-            <Field label="Tolerance">{fmt(model.tolerance, 3)} m</Field>
-            {model.no_seam !== null && <Field label="No seam at">RL {fmt(model.no_seam, 2)}</Field>}
-            <Field label="Status">
+            </ShownRow>
+            <ShownRow label="Density grid">{model.density}</ShownRow>
+            <ShownRow label="Tolerance">{fmt(model.tolerance, 3)} m</ShownRow>
+            {model.no_seam !== null && <ShownRow label="No seam at">RL {fmt(model.no_seam, 2)}</ShownRow>}
+            <ShownRow label="Status">
               {blocking === 0 ? 'Ready for solids and reserves' : `${blocking} blocking issue${blocking === 1 ? '' : 's'}: fix the grids and rebuild`}
-            </Field>
-          </Section>
-          <Section title="Issues">
+            </ShownRow>
+          </ShownSection>
+          <ShownSection title="Issues">
             <Issues id={d.id} issues={model.issues} />
-          </Section>
-          <Section title="Horizons (top first): click to show">
+          </ShownSection>
+          <ShownSection title="Horizons (top first): click to show">
             <Horizons id={d.id} model={model} />
-          </Section>
+          </ShownSection>
         </>
       );
     }
@@ -691,26 +560,28 @@ function Measurements({ d }: { d: ObjectDetails }) {
  */
 function SolidsUnder({ solids }: { solids: ObjectSummary[] }) {
   const { setSelection } = useWorkspace();
-  const [volume, setVolume] = useState('100');
-  const [said, setSaid] = useState<string | null>(null);
-  const v = volume.trim() === '' ? null : Number(volume);
+  const [volume, setVolume] = useState(100);
+  const [said, setSaid] = useState<Said | null>(null);
   const narrow = async () => {
-    if (v === null) return;
     const under = await solidsUnder(
       solids.map((o) => o.id),
-      v,
+      volume,
     );
-    if (under.length === 0) return setSaid(`None of the ${fmt(solids.length)} holds less than ${fmt(v)} m³`);
+    if (under.length === 0) return setSaid(quiet(`None of the ${fmt(solids.length)} holds less than ${fmt(volume)} m³`));
     setSaid(null);
     setSelection(under);
   };
   return (
     <>
-      <ToolRow label="Under" apply="Keep those selected" disabled={v === null || !Number.isFinite(v) || v <= 0} onApply={() => void narrow()}>
-        <SmallInput value={volume} onChange={setVolume} placeholder="m³" title="Keep selected only the solids holding less than this (m³)" />
-        <span className="text-muted-foreground">m³</span>
-      </ToolRow>
-      {said && <p className="px-3 py-0.5 text-xs text-muted-foreground">{said}</p>}
+      <div className="px-3 text-xs">
+        <Field label="Under">
+          <NumberInput value={volume} onChange={setVolume} label="Keep selected only the solids holding less than this" unit="m³" range={{ min: 0, minIncluded: false }} />
+          <PanelButton row onClick={() => void narrow()}>
+            Keep those selected
+          </PanelButton>
+        </Field>
+      </div>
+      <SaidLine said={said} className="px-3 py-0.5 text-xs" />
     </>
   );
 }
@@ -775,29 +646,29 @@ function SelectionProperties({ objects }: { objects: ObjectSummary[] }) {
           <Trash2 />
         </Button>
       </div>
-      <Section title="Selection">
-        <Field label="What">{kindCounts(objects)}</Field>
-        <Field label={perLayer.size === 1 ? 'Layer' : 'Layers'}>
+      <ShownSection title="Selection">
+        <ShownRow label="What">{kindCounts(objects)}</ShownRow>
+        <ShownRow label={perLayer.size === 1 ? 'Layer' : 'Layers'}>
           <span title={[...perLayer].map(([id, n]) => `${layerNames.get(id) ?? id} (${fmt(n)})`).join('\n')}>
             {[...perLayer].map(([id, n]) => (perLayer.size === 1 ? layerNames.get(id) : `${layerNames.get(id)} (${fmt(n)})`)).join(', ')}
           </span>
-        </Field>
+        </ShownRow>
         {box && (
           <>
-            <Field label="Easting">
+            <ShownRow label="Easting">
               {coord(box[0][0])} to {coord(box[1][0])}
-            </Field>
-            <Field label="Northing">
+            </ShownRow>
+            <ShownRow label="Northing">
               {coord(box[0][1])} to {coord(box[1][1])}
-            </Field>
-            <Field label="RL">
+            </ShownRow>
+            <ShownRow label="RL">
               {coord(box[0][2])} to {coord(box[1][2])}
-            </Field>
+            </ShownRow>
           </>
         )}
-      </Section>
+      </ShownSection>
       {seeThrough.length > 0 && (
-        <Section title="Look">
+        <ShownSection title="Look">
           {coloured.length > 0 && (
             <div className="grid grid-cols-[7.5rem_1fr] items-center gap-2 px-3 py-0.5 text-xs">
               <span className="text-muted-foreground">Colour</span>
@@ -812,20 +683,20 @@ function SelectionProperties({ objects }: { objects: ObjectSummary[] }) {
               </span>
             </div>
           )}
-          <OpacitySlider
+          <PercentSlider
             label="Opacity"
             value={lookOf(summary?.display, seeThrough[0].id).opacity}
             onChange={(o, commit) => setLooks(seeThrough.map((x) => x.id), null, o, commit)}
           />
           {seeThrough.length < objects.length && <p className="px-3 pt-0.5 text-xs text-muted-foreground">Solids and strings are seen through by their layers: right-click a layer in the tree.</p>}
-        </Section>
+        </ShownSection>
       )}
       {solids.length > 0 && (
-        <Section title="Solids">
+        <ShownSection title="Solids">
           <SolidsUnder solids={solids} />
-        </Section>
+        </ShownSection>
       )}
-      <Section title="Each">
+      <ShownSection title="Each">
         {objects.slice(0, MOST_LISTED).map((o) => (
           <button
             key={o.id}
@@ -839,13 +710,28 @@ function SelectionProperties({ objects }: { objects: ObjectSummary[] }) {
           </button>
         ))}
         {objects.length > MOST_LISTED && <p className="px-3 py-0.5 text-xs text-muted-foreground">and {fmt(objects.length - MOST_LISTED)} more</p>}
-      </Section>
+      </ShownSection>
     </ScrollArea>
   );
 }
 
-/** The selected object: name (editable), layer, measurements, validity, attributes and history. Several selected show together. */
+/**
+ * Properties (decision 0076): what's picked, under a head saying so, as every panel has. It shows only; a command on
+ * what's picked is a tool.
+ */
 export function PropertiesPanel() {
+  return (
+    <div className="flex h-full flex-col">
+      <PanelHead line="What's picked: name, look, measures, history" more="What's picked: its name, look, attributes, measures and history. Properties shows only. A command on what's picked is a tool on the ribbon; renaming is here, and Delete." />
+      <div className="min-h-0 flex-1">
+        <PickedProperties />
+      </div>
+    </div>
+  );
+}
+
+/** The selected object: name (editable), layer, measurements, validity, attributes and history. Several selected show together. */
+function PickedProperties() {
   const { summary, selected, selection, run, select } = useWorkspace();
   const several = useMemo(() => {
     if (selection.length < 2) return null;
@@ -891,10 +777,11 @@ export function PropertiesPanel() {
     <ScrollArea className="h-full">
       <div className="flex items-center gap-2 border-b px-3 py-2">
         <Badge variant="secondary">{kindLabel[object.kind]}</Badge>
-        <Input
-          className="h-7 flex-1 text-sm font-medium"
+        <TextInput
+          className="flex-1 text-sm font-medium"
           value={name}
-          onChange={(e) => setName(e.target.value)}
+          label="Name"
+          onChange={setName}
           onBlur={rename}
           onKeyDown={(e) => {
             if (e.key === 'Enter') e.currentTarget.blur();
@@ -905,7 +792,6 @@ export function PropertiesPanel() {
               e.currentTarget.blur();
             }
           }}
-          aria-label="Name"
         />
         <Button
           variant="ghost"
@@ -916,47 +802,47 @@ export function PropertiesPanel() {
           <Trash2 />
         </Button>
       </div>
-      <Section title="Object">
-        <Field label="Layer">{current?.layer ?? '…'}</Field>
-        <Field label="Revision">{object.revision}</Field>
+      <ShownSection title="Object">
+        <ShownRow label="Layer">{current?.layer ?? '…'}</ShownRow>
+        <ShownRow label="Revision">{object.revision}</ShownRow>
         <IdField id={object.id} />
         {current?.bounds && (
           <>
-            <Field label="Easting">
+            <ShownRow label="Easting">
               {coord(current.bounds[0][0])} to {coord(current.bounds[1][0])}
-            </Field>
-            <Field label="Northing">
+            </ShownRow>
+            <ShownRow label="Northing">
               {coord(current.bounds[0][1])} to {coord(current.bounds[1][1])}
-            </Field>
-            <Field label="RL">
+            </ShownRow>
+            <ShownRow label="RL">
               {coord(current.bounds[0][2])} to {coord(current.bounds[1][2])}
-            </Field>
+            </ShownRow>
           </>
         )}
-      </Section>
+      </ShownSection>
       {(object.drawn || object.kind === 'seam_model') && <Look object={object} />}
       {error && <p className="px-3 py-2 text-xs text-destructive">{error}</p>}
       {current && <Measurements d={current} />}
       {attributes.length > 0 && (
-        <Section title="Attributes">
+        <ShownSection title="Attributes">
           {attributes.map(([key, value]) => (
-            <Field key={key} label={key}>
+            <ShownRow key={key} label={key}>
               {String(value)}
-            </Field>
+            </ShownRow>
           ))}
-        </Section>
+        </ShownSection>
       )}
       {current && (
-        <Section title="History">
+        <ShownSection title="History">
           {[...current.history].reverse().map((h) => (
-            <Field key={h.revision} label={`Revision ${h.revision}`}>
+            <ShownRow key={h.revision} label={`Revision ${h.revision}`}>
               <span title={`run ${h.run}`}>
                 {h.command ?? 'earlier session'}
                 {h.at_unix_ms !== null && <span className="text-muted-foreground"> · {clock(h.at_unix_ms)}</span>}
               </span>
-            </Field>
+            </ShownRow>
           ))}
-        </Section>
+        </ShownSection>
       )}
     </ScrollArea>
   );

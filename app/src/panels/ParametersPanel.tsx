@@ -1,9 +1,8 @@
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Braces, Copy, CopyPlus, Plus, Save, Split, Table2, Trash2, Undo2, X } from 'lucide-react';
 import { type ClipboardEvent, type KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { type Dataflow, dataflowCheck, type WordField, objectDetails, type ObjectSummary, type ParameterTable, type ParametersPicked, parametersCheck, parametersPicked, parametersReadBy, type ReadBy } from '@/bridge';
-import { CellInput, Choice, IconButton, ObjectMenu, Select, StatusBadge } from '@/design-system/kit';
+import { CellInput, Choice, IconButton, ObjectMenu, ok, PanelButton, refused, type Said, SaidLine, Select, StatusBadge, TextButton, warning } from '@/design-system/kit';
 import { ProjectScriptEditor } from './ProjectScriptEditor';
-import { Button } from '@/design-system/ui/button';
 import { cn } from 'cn';
 import { useWorkspace } from '@/workspace/context';
 import { openItem, sectionOf } from '@/workspace/tablesSide';
@@ -103,9 +102,9 @@ export function Parameters({ shown = null, list = true }: { shown?: string | nul
   if (!object && id !== NEW_SCRIPT) {
     return (
       <div className="space-y-2 p-3 text-xs text-muted-foreground">
-        <button type="button" className="text-foreground hover:underline" onClick={() => setId(NEW_SCRIPT)}>
+        <TextButton tone="plain" onClick={() => setId(NEW_SCRIPT)}>
           + New script
-        </button>
+        </TextButton>
         <div>No parameter tables, dataflows or scripts in this project yet. Tables and dataflows are made from Python (parameters.save, dataflow.save, or the starter dataflow) and edited here.</div>
       </div>
     );
@@ -176,7 +175,7 @@ function TableEditor({ object, onMade, openCell }: { object: ObjectSummary; onMa
   const [savedColumns, setSavedColumns] = useState<string[]>([]);
   const [rowsPicked, setRowsPicked] = useState<Set<string>>(new Set());
   const [engineWhy, setEngineWhy] = useState<string | null>(null);
-  const [said, setSaid] = useState<{ text: string; tone: 'ok' | 'warning' | 'refused' } | null>(null);
+  const [said, setSaid] = useState<Said | null>(null);
   const [picked, setPicked] = useState<ParametersPicked | null>(null);
   // The edits this grid last gave the workspace, as JSON: an edit that isn't these came from another tab.
   const mine = useRef<string | null>(null);
@@ -275,7 +274,7 @@ function TableEditor({ object, onMade, openCell }: { object: ObjectSummary; onMa
 
   const edited = gridEdited(grid, saved.rows.length, savedColumns);
   const why = (row: string | null, column: string) => checked.problems.find((p) => p.row === row && p.column === column)?.why ?? null;
-  const refused = checked.problems.length > 0 || engineWhy !== null;
+  const blocked = checked.problems.length > 0 || engineWhy !== null;
   const here = picked?.tables.findIndex(([t]) => t === object.id) ?? -1;
   const fits = new Set(picked?.picked && here >= 0 ? picked.picked.fits[here] : []);
   const givenHere = (column: string, savedRow: number | null) => {
@@ -292,10 +291,10 @@ function TableEditor({ object, onMade, openCell }: { object: ObjectSummary; onMa
     setSaid(null);
   };
   const save = async () => {
-    if (!edited || refused) return;
+    if (!edited || blocked) return;
     const reply = await runRecord('parameters.save', { table: object.id, name: object.name, content: checked.table });
-    if (reply.error) return setSaid({ text: reply.error, tone: 'refused' });
-    setSaid({ text: picked?.dataflow ? `Saved. Reserves tables made before this used the last revision: run reserves again to see it.` : 'Saved.', tone: 'ok' });
+    if (reply.error) return setSaid(refused(reply.error));
+    setSaid(ok(picked?.dataflow ? `Saved. Reserves tables made before this used the last revision: run reserves again to see it.` : 'Saved.'));
   };
   const copyAsNew = async () => {
     const reply = await runRecord('parameters.save', { name: `${object.name} copy`, content: checked.table });
@@ -316,7 +315,7 @@ function TableEditor({ object, onMade, openCell }: { object: ObjectSummary; onMa
     e.preventDefault();
     const { grid: g, cut } = pasteTurned(grid, row, column, parseClipboard(text));
     update(g);
-    if (cut) setSaid({ text: `${cut} pasted cell${cut === 1 ? '' : 's'} past the last parameter left out`, tone: 'warning' });
+    if (cut) setSaid(warning(`${cut} pasted cell${cut === 1 ? '' : 's'} past the last parameter left out`));
   };
   // Enter goes down to the next parameter, Shift+Enter up, as in a sheet; Tab goes across.
   const onCellKey = (p: number, r: number) => (e: KeyboardEvent<HTMLInputElement>) => {
@@ -336,10 +335,9 @@ function TableEditor({ object, onMade, openCell }: { object: ObjectSummary; onMa
   const copyRows = () =>
     void navigator.clipboard.writeText(copyTextTurned(grid, rowsPicked.size ? rowsPicked : null)).then(() => {
       const n = rowsPicked.size || grid.rows.length;
-      setSaid({ text: `${n} column${n === 1 ? '' : 's'} copied, a parameter a line with its heading, to paste into Excel`, tone: 'ok' });
+      setSaid(ok(`${n} column${n === 1 ? '' : 's'} copied, a parameter a line with its heading, to paste into Excel`));
     });
   const firstValue = grid.columns.findIndex((c) => c.kind === 'value');
-  const tool = 'h-6 px-2 text-xs';
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" onKeyDown={saveKey(() => void save())}>
@@ -348,39 +346,39 @@ function TableEditor({ object, onMade, openCell }: { object: ObjectSummary; onMa
         {picked?.dataflow && <span className="text-muted-foreground">read by {picked.dataflow}{picked.tables.length > 1 ? `, table ${here + 1} of ${picked.tables.length}` : ''}</span>}
         {edited && <StatusBadge tone="edited">edited</StatusBadge>}
         <span className="ml-2 flex items-center gap-1">
-          <Button variant="outline" size="sm" className={tool} onClick={() => update(insertRow(grid))} title="A blank column at the right, read last; move it left to where it's read">
+          <PanelButton row onClick={() => update(insertRow(grid))} title="A blank column at the right, read last; move it left to where it's read">
             <Plus className="size-3.5" /> Column
-          </Button>
-          <Button variant="outline" size="sm" className={tool} onClick={() => update(addColumn(grid, 'filter'))} title="A filter: the attribute a column is chosen by">
+          </PanelButton>
+          <PanelButton row onClick={() => update(addColumn(grid, 'filter'))} title="A filter: the attribute a column is chosen by">
             <Plus className="size-3.5" /> Filter
-          </Button>
-          <Button variant="outline" size="sm" className={tool} onClick={() => update(addColumn(grid, 'value'))} title="A parameter: an assumption the columns give">
+          </PanelButton>
+          <PanelButton row onClick={() => update(addColumn(grid, 'value'))} title="A parameter: an assumption the columns give">
             <Plus className="size-3.5" /> Parameter
-          </Button>
-          <Button variant="outline" size="sm" className={tool} disabled={!rowsPicked.size} onClick={() => (update(deleteRows(grid, rowsPicked)), setRowsPicked(new Set()))} title="Take the picked columns out (pick a column by its number)">
+          </PanelButton>
+          <PanelButton row disabled={!rowsPicked.size} onClick={() => (update(deleteRows(grid, rowsPicked)), setRowsPicked(new Set()))} title="Take the picked columns out (pick a column by its number)">
             <Trash2 className="size-3.5" /> Columns
-          </Button>
-          <Button variant="outline" size="sm" className={tool} onClick={copyRows} title="Copy the picked columns, or all of them, a parameter a line with its heading, to paste into Excel">
+          </PanelButton>
+          <PanelButton row onClick={copyRows} title="Copy the picked columns, or all of them, a parameter a line with its heading, to paste into Excel">
             <Copy className="size-3.5" /> Copy
-          </Button>
-          <Button variant="outline" size="sm" className="h-6 px-2 text-xs" disabled={refused} onClick={() => void copyAsNew()} title="Save this table as a new one, as it stands: a case's own table to read before this one">
+          </PanelButton>
+          <PanelButton row disabled={blocked} onClick={() => void copyAsNew()} title="Save this table as a new one, as it stands: a case's own table to read before this one">
             <CopyPlus className="size-3.5" /> Copy as a new table
-          </Button>
+          </PanelButton>
         </span>
         <span className="ml-auto flex items-center gap-1">
-          <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" disabled={!edited} onClick={discard} title="Put the table back as saved">
+          <PanelButton row variant="ghost" disabled={!edited} onClick={discard} title="Put the table back as saved">
             <Undo2 className="size-3.5" /> Discard
-          </Button>
-          <Button size="sm" className="h-6 px-2 text-xs" disabled={!edited || refused} onClick={() => void save()} title="Save the table as its next revision (Ctrl+Enter); one undo">
+          </PanelButton>
+          <PanelButton variant="default" row disabled={!edited || blocked} onClick={() => void save()} title="Save the table as its next revision (Ctrl+Enter); one undo">
             <Save className="size-3.5" /> Save
-          </Button>
+          </PanelButton>
         </span>
       </div>
       {(said || engineWhy || checked.problems.length > 0 || picked?.picked) && (
         <div className="flex shrink-0 flex-col gap-0.5 border-b border-border px-2 py-1">
           {checked.problems.length > 0 && <div className="text-destructive">{checked.problems.length === 1 ? checked.problems[0].why : `${checked.problems.length} cells can't be saved as they are: ${checked.problems[0].why}, …`}</div>}
           {engineWhy && <div className="text-destructive">{engineWhy}</div>}
-          {said && <div className={cn(said.tone === 'ok' && 'text-ok', said.tone === 'warning' && 'text-warning', said.tone === 'refused' && 'text-destructive')}>{said.text}</div>}
+          <SaidLine said={said} />
           {picked?.picked && solid && (
             <div className="text-muted-foreground" data-slot="parameters-picked">
               <span className="text-primary">{solids.get(solid)}</span> fits {fits.size ? `column${fits.size === 1 ? '' : 's'} ${[...fits].map((r) => r + 1).join(', ')}` : 'no column'} of this table; its values in gold{edited ? ', as saved' : ''}.
@@ -560,7 +558,7 @@ function DataflowEditor({ object, tables, openStep }: { object: ObjectSummary; t
   const [saved, setSaved] = useState<Dataflow | null>(null);
   const [flow, setFlow] = useState<Dataflow | null>(null);
   const [engineWhy, setEngineWhy] = useState<string | null>(null);
-  const [said, setSaid] = useState<{ text: string; tone: 'ok' | 'refused' } | null>(null);
+  const [said, setSaid] = useState<Said | null>(null);
   const [formulaAt, setFormulaAt] = useState<number | null>(null);
   const [tableAt, setTableAt] = useState<number | null>(null);
   const [allocationAt, setAllocationAt] = useState<number | null>(null);
@@ -626,8 +624,8 @@ function DataflowEditor({ object, tables, openStep }: { object: ObjectSummary; t
   const save = async () => {
     if (!edited || engineWhy) return;
     const reply = await runRecord('dataflow.save', { dataflow: object.id, name: object.name, content: flow });
-    if (reply.error) return setSaid({ text: reply.error, tone: 'refused' });
-    setSaid({ text: 'Saved. Reserves tables made before this used the last revision: run reserves again to see it.', tone: 'ok' });
+    if (reply.error) return setSaid(refused(reply.error));
+    setSaid(ok('Saved. Reserves tables made before this used the last revision: run reserves again to see it.'));
   };
   // A new formula step after a stage, after any formula already there, opened.
   const addFormula = (anchor: string) => {
@@ -668,15 +666,15 @@ function DataflowEditor({ object, tables, openStep }: { object: ObjectSummary; t
     setAllocationAt(at);
   };
   const addAllocationSet = async () => {
-    if (edited) return setSaid({ text: 'Save or discard your edits first: waste allocation is added to the saved dataflow.', tone: 'refused' });
+    if (edited) return setSaid(refused('Save or discard your edits first: waste allocation is added to the saved dataflow.'));
     const done = await addWasteAllocation(object.id);
-    if (done.error) return setSaid({ text: done.error, tone: 'refused' });
+    if (done.error) return setSaid(refused(done.error));
     const d = await objectDetails(object.id);
     if (d.measures.kind === 'dataflow') {
       setSaved(d.measures.dataflow);
       setFlow(d.measures.dataflow);
     }
-    setSaid({ text: 'Added the Waste allocation add-on, which this dataflow now runs, and its four parameter tables (Waste allocation settings, Dragline factors, Waste processes, Short term overrides). Open Waste allocation to edit its steps: every table that runs it takes the edit.', tone: 'ok' });
+    setSaid(ok('Added the Waste allocation add-on, which this dataflow now runs, and its four parameter tables (Waste allocation settings, Dragline factors, Waste processes, Short term overrides). Open Waste allocation to edit its steps: every table that runs it takes the edit.'));
   };
   // A new table script step at the end, after final and any table script there, opened (decision 0099, workstream 7).
   const addTableStep = () => {
@@ -695,18 +693,18 @@ function DataflowEditor({ object, tables, openStep }: { object: ObjectSummary; t
         <span className="font-semibold">{object.name}</span>
         {edited && <StatusBadge tone="edited">edited</StatusBadge>}
         <span className="ml-auto flex items-center gap-1">
-          <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" disabled={!edited} onClick={() => (setFlow(saved), setSaid(null))}>
+          <PanelButton row variant="ghost" disabled={!edited} onClick={() => (setFlow(saved), setSaid(null))}>
             <Undo2 className="size-3.5" /> Discard
-          </Button>
-          <Button size="sm" className="h-6 px-2 text-xs" disabled={!edited || !!engineWhy} onClick={() => void save()} title="Save the dataflow as its next revision (Ctrl+Enter); one undo">
+          </PanelButton>
+          <PanelButton variant="default" row disabled={!edited || !!engineWhy} onClick={() => void save()} title="Save the dataflow as its next revision (Ctrl+Enter); one undo">
             <Save className="size-3.5" /> Save
-          </Button>
+          </PanelButton>
         </span>
       </div>
       {(engineWhy || said) && (
         <div className="shrink-0 border-b border-border px-2 py-1">
           {engineWhy && <div className="text-destructive">{engineWhy}</div>}
-          {said && <div className={said.tone === 'ok' ? 'text-ok' : 'text-destructive'}>{said.text}</div>}
+          <SaidLine said={said} />
         </div>
       )}
       <div className="flex min-h-0 flex-1 gap-4 overflow-auto p-2">
@@ -742,9 +740,9 @@ function DataflowEditor({ object, tables, openStep }: { object: ObjectSummary; t
                 </IconButton>
               </div>
             ))}
-            <Button variant="outline" size="sm" className="mt-1 h-6 px-2 text-xs" onClick={() => set({ levels: [...levels, { attribute: 'attribute' }] })}>
+            <PanelButton row className="mt-1" onClick={() => set({ levels: [...levels, { attribute: 'attribute' }] })}>
               <Plus className="size-3.5" /> Level
-            </Button>
+            </PanelButton>
           </section>
           )}
           <section>
@@ -1035,9 +1033,9 @@ function DataflowEditor({ object, tables, openStep }: { object: ObjectSummary; t
               ))}
             </tbody>
           </table>
-          <Button variant="outline" size="sm" className="mt-1 h-6 px-2 text-xs" onClick={() => set({ fields: [...flow.fields, { name: 'new_field', kind: 'quality', add_up: { by: 'volume' }, from: 'attribute', attribute: 'new_field' }] })}>
+          <PanelButton row className="mt-1" onClick={() => set({ fields: [...flow.fields, { name: 'new_field', kind: 'quality', add_up: { by: 'volume' }, from: 'attribute', attribute: 'new_field' }] })}>
             <Plus className="size-3.5" /> Field
-          </Button>
+          </PanelButton>
           <div className="mt-3 mb-0.5 font-semibold">Word fields</div>
           <p className="mb-1 text-muted-foreground">Words each unit carries (a process, a method, a zone), set by a step's script and written beside the numbers; a leaf whose units differ shows them joined.</p>
           {words.length > 0 && (
@@ -1078,9 +1076,9 @@ function DataflowEditor({ object, tables, openStep }: { object: ObjectSummary; t
               </tbody>
             </table>
           )}
-          <Button variant="outline" size="sm" className="mt-1 h-6 px-2 text-xs" onClick={() => set({ words: [...words, { name: newWordName(words), from: 'worked' }] })}>
+          <PanelButton row className="mt-1" onClick={() => set({ words: [...words, { name: newWordName(words), from: 'worked' }] })}>
             <Plus className="size-3.5" /> Word field
-          </Button>
+          </PanelButton>
         </section>
         )}
       </div>

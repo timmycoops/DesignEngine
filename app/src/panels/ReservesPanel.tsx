@@ -3,8 +3,7 @@ import { FolderOpen, Scale, Sigma } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { Button } from '@/design-system/ui/button';
-import { Input } from '@/design-system/ui/input';
-import { Choice, Field, type RunReport, Select, type ToolAction, ToolPanel, ToolSection } from '@/design-system/kit';
+import { Choice, Field, type RunReport, Select, TextInput, type ToolAction, ToolPanel, ToolSection } from '@/design-system/kit';
 import { choiceWords } from '@/tools';
 import { useWorkspace } from '@/workspace/context';
 
@@ -138,13 +137,13 @@ export function ReservesPanel() {
             )}
           </Field>
           <Field label="Seam from" hint="The attribute naming each block's seam, as the grids name it (seam1 of grnseam1.asg)">
-            <Input className="h-7 w-40 px-1.5 text-xs" value={seamAttribute} aria-label="Attribute naming each block's seam" onChange={(e) => setSeamAttribute(e.target.value)} />
+            <TextInput className="w-40" value={seamAttribute} label="Attribute naming each block's seam" onChange={(value) => setSeamAttribute(value)} />
           </Field>
           <Field label="Variables" hint="Codes to write, such as as rd; blank for every grid of each block's seam">
-            <Input className="h-7 w-40 px-1.5 text-xs" value={variables} placeholder="every grid" aria-label="Variables to write" onChange={(e) => setVariables(e.target.value)} />
+            <TextInput className="w-40" value={variables} placeholder="every grid" label="Variables to write" onChange={(value) => setVariables(value)} />
           </Field>
           <Field label="Prefix" hint="Put in front of each code, where the blocks already have an attribute of that name">
-            <Input className="h-7 w-40 px-1.5 text-xs" value={prefix} placeholder="none" aria-label="Prefix for the attributes written" onChange={(e) => setPrefix(e.target.value)} />
+            <TextInput className="w-40" value={prefix} placeholder="none" label="Prefix for the attributes written" onChange={(value) => setPrefix(value)} />
           </Field>
           <div className="text-muted-foreground">Density by volume and every other grid by coal tonnes. The 2.5D column volume is written too, as a check.</div>
         </ToolSection>

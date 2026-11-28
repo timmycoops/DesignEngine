@@ -2,8 +2,7 @@ import { Combine, Hammer, Plus, RotateCcw, Trash2 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { type BuildOp, type BuildRecord, objectDetails, type ObjectSummary, type Ramp, type RampBerm, type RampHeading, type StepTarget, type Vec3, type WallSide } from '@/bridge';
 import { Button } from '@/design-system/ui/button';
-import { Input } from '@/design-system/ui/input';
-import { Choice, Field, IconButton, NumberInput, plainNote, RoadBadge, type RunReport, StatusBadge, TargetInput, type ToolAction, ToolPanel, ToolSection } from '@/design-system/kit';
+import { Choice, Field, IconButton, NumberInput, plainNote, RoadBadge, type RunReport, StatusBadge, TargetInput, TextInput, type ToolAction, ToolPanel, ToolSection } from '@/design-system/kit';
 import { useWorkspace } from '@/workspace/context';
 
 /**
@@ -458,7 +457,7 @@ export function BuilderPanel() {
               <div className="flex flex-col gap-1 rounded-md bg-muted/40 p-2">
                 <div className="text-muted-foreground">Starting a build from this line:</div>
                 <Field label="Build">
-                  <Input className="h-7 w-40 px-1.5 text-xs" value={name} aria-label="Build name" onChange={(e) => setName(e.target.value)} />
+                  <TextInput className="w-40" value={name} label="Build name" onChange={(value) => setName(value)} />
                 </Field>
                 <Field label="Lies on">
                   <TargetInput value={liesOn} surfaces={surfaces} label="What the line lies on" onChange={(t) => t && setLiesOn(t)} />

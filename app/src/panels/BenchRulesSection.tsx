@@ -1,9 +1,7 @@
 import { ArrowDown, ArrowUp, Download, Plus, Upload, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/design-system/ui/button';
-import { Checkbox } from '@/design-system/ui/checkbox';
-import { Input } from '@/design-system/ui/input';
-import { Choice, Field, IconButton, NumberInput, ToolSection } from '@/design-system/kit';
+import { Check, Choice, Field, IconButton, NumberInput, TextInput, ToolSection } from '@/design-system/kit';
 import { type Attributes, type BenchRule, catchAll, everything, horizonState, horizonsOf, readWhen, rulesFromCsv, rulesToCsv, setHorizonBenched, taken, whenText } from './benchRules';
 
 /**
@@ -23,16 +21,16 @@ function WhenInput({ when, onChange, index }: { when: Record<string, string>; on
   // A filter set from outside (a CSV read, a rule moved) shows.
   useEffect(() => setText(shown), [shown]);
   return (
-    <Input
+    <TextInput
       className={`h-7 min-w-0 flex-1 px-1.5 text-xs ${why ? 'border-warning ring-1 ring-warning/40' : ''}`}
       value={text}
       placeholder="Everything"
-      aria-label={`Rule ${index + 1}: which solids`}
+      label={`Rule ${index + 1}: which solids`}
       aria-invalid={why !== null}
       title={why ?? 'Attribute: values; another: values. A comma list of words, numbers, ranges such as 1-5 or comparisons such as <0.3, and !WASTE for a value it may not hold; blank is everything'}
-      onChange={(e) => {
-        setText(e.target.value);
-        const read = readWhen(e.target.value);
+      onChange={(value) => {
+        setText(value);
+        const read = readWhen(value);
         setWhy('why' in read ? read.why : null);
       }}
       onBlur={() => {
@@ -127,11 +125,11 @@ export function BenchRulesSection({ rules, onChange, solids, flapThickness, onFl
             const by = state.rules.filter((k) => !(k === 0 && state.byTicks)).map((k) => k + 1);
             return (
               <label key={h} className="inline-flex items-center gap-1" title={state.byTicks ? `${h}: benched or not` : `${h}: set by rule ${by.join(', ')}`}>
-                <Checkbox
+                <Check
                   checked={state.benched === 'all' ? true : state.benched === 'none' ? false : 'indeterminate'}
                   disabled={!state.byTicks}
-                  aria-label={`Bench ${h}`}
-                  onCheckedChange={(on) => onChange(setHorizonBenched(rules, h, on === true))}
+                  label={`Bench ${h}`}
+                  onChange={(on) => onChange(setHorizonBenched(rules, h, on))}
                 />
                 {h}
               </label>
@@ -157,7 +155,7 @@ export function BenchRulesSection({ rules, onChange, solids, flapThickness, onFl
               <span className="w-4 shrink-0 text-right tabular-nums text-muted-foreground">{k + 1}</span>
               <WhenInput when={rule.when} index={k} onChange={(when) => set(k, { ...rule, when })} />
               <label className="inline-flex shrink-0 items-center gap-1" title="Benched, or carried over whole">
-                <Checkbox checked={rule.benched} aria-label={`Rule ${k + 1}: benched`} onCheckedChange={(on) => set(k, { ...rule, benched: on === true })} />
+                <Check checked={rule.benched} label={`Rule ${k + 1}: benched`} onChange={(on) => set(k, { ...rule, benched: on })} />
                 Bench
               </label>
               <span className="w-14 shrink-0 text-right tabular-nums text-muted-foreground" title="How many of the solids this rule takes">
@@ -175,13 +173,13 @@ export function BenchRulesSection({ rules, onChange, solids, flapThickness, onFl
             </div>
             <div className="flex flex-wrap items-center gap-1.5 pl-5">
               {rule.benched ? <Levels rule={rule} index={k} onChange={(r) => set(k, r)} /> : <span className="text-muted-foreground">Carried over whole</span>}
-              <Input
-                className="h-7 w-36 px-1.5 text-xs"
+              <TextInput
+                className="w-36"
                 value={rule.layer ?? ''}
                 placeholder="The run's layer"
-                aria-label={`Rule ${k + 1}: its own layer`}
+                label={`Rule ${k + 1}: its own layer`}
                 title="Its own output layer; blank, the run's layer"
-                onChange={(e) => set(k, { ...rule, layer: e.target.value })}
+                onChange={(value) => set(k, { ...rule, layer: value })}
               />
             </div>
           </li>

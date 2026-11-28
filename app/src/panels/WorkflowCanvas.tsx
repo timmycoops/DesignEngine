@@ -3,7 +3,7 @@ import '@xyflow/react/dist/style.css';
 import { PanelLeftClose, PanelLeftOpen, Pause, Scan } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import type { WorkflowStep } from '@/bridge';
-import { IconButton, StatusBadge } from '@/design-system/kit';
+import { IconButton, ok, refused, type Said, SaidLine, StatusBadge } from '@/design-system/kit';
 import { useWorkspace } from '@/workspace/context';
 import { caseValue, changesOfCase, ruleWords, type SettingRow, settingsOfStep, stepsOfCase, withSetting } from './workflow';
 import { type GraphNode, rewire, workflowGraph } from './workflowGraph';
@@ -146,7 +146,7 @@ export function WorkflowCanvas() {
   // The workflow and case picked beside it, in the same document (decision 0108).
   const { chosen, workflow, revision, caseName, save } = usePickedWorkflow();
   const [focus, setFocus] = useState<number | null>(null);
-  const [said, setSaid] = useState<{ error?: string; text?: string }>({});
+  const [said, setSaid] = useState<Said | null>(null);
 
   const graph = useMemo(() => (workflow ? workflowGraph({ ...workflow, steps: stepsOfCase(workflow, caseName) }) : null), [workflow, caseName]);
   const changes = useMemo(() => (workflow ? changesOfCase(workflow, caseName) : new Map<number, number>()), [workflow, caseName]);
@@ -190,21 +190,21 @@ export function WorkflowCanvas() {
   const setCell = async (row: SettingRow, text: string) => {
     if (!workflow) return;
     const next = withSetting(workflow, caseName, row, text);
-    if (!next) return setSaid({ error: `'${text}' isn't a ${typeof row.base === 'number' ? 'number' : 'true or false'}, as ${row.field} has to be` });
+    if (!next) return setSaid(refused(`'${text}' isn't a ${typeof row.base === 'number' ? 'number' : 'true or false'}, as ${row.field} has to be`));
     const error = await save(next);
-    setSaid(error ? { error } : {});
+    setSaid(error ? refused(error) : null);
   };
 
   const wire = async (source: string | null, target: string | null, input: string | null | undefined) => {
     if (!workflow || !source || !target || !input) return;
     const next = rewire(workflow, source, target, input);
-    if (typeof next === 'string') return setSaid({ error: next });
-    if (next === workflow) return setSaid({});
+    if (typeof next === 'string') return setSaid(refused(next));
+    if (next === workflow) return setSaid(null);
     const error = await save(next);
     const at = (node: string) => workflow.steps.findIndex((s) => `step:${s.id}` === node) + 1;
     const [kind, ...name] = source.split(':');
     const from = kind === 'step' ? `step ${at(source)}` : kind === 'layer' ? `layer '${name.join(':')}'` : `'${name.join(':')}'`;
-    setSaid(error ? { error } : { text: `Step ${at(target)}'s ${input} now reads from ${from}` });
+    setSaid(error ? refused(error) : ok(`Step ${at(target)}'s ${input} now reads from ${from}`));
   };
 
   const show = (step: WorkflowStep) => {
@@ -223,7 +223,7 @@ export function WorkflowCanvas() {
     if (picked.length > 0) setSelection(picked);
     setAddingTo({ id: chosen.id, name: chosen.name, at });
     openTool(tool.panel, tool.mode);
-    setSaid({ text: dropWords(workflow, chosen.name, tool, at, picked.length) });
+    setSaid(ok(dropWords(workflow, chosen.name, tool, at, picked.length)));
   };
 
   const dropped = (e: React.DragEvent) => {
@@ -247,7 +247,7 @@ export function WorkflowCanvas() {
             </IconButton>
           )}
           <span className="min-w-0 flex-1 truncate text-muted-foreground">
-          {said.error ? <span className="text-destructive">{said.error}</span> : said.text ? <span className="text-ok">{said.text}</span> : 'Drag a tool onto a step to add one after it; drag from a step’s right edge onto a later step’s input to wire it; click a step for its settings'}
+          {said ? <SaidLine said={said} inline /> : 'Drag a tool onto a step to add one after it; drag from a step’s right edge onto a later step’s input to wire it; click a step for its settings'}
           </span>
         </div>
         <div

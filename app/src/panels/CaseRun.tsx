@@ -1,15 +1,11 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { type CaseState, caseState, type DataflowState, reservesRerunParams } from '@/bridge';
-import { Select, StatusBadge } from '@/design-system/kit';
-import { cn } from 'cn';
+import { ok, refused, type Said, SaidLine, Select, StatusBadge } from '@/design-system/kit';
 import { useWorkspace } from '@/workspace/context';
 import { caseOpen, onItem, setCase } from '@/workspace/tablesSide';
 import { useCases } from './CasesBar';
 import { CaseSwitcher } from './CaseSwitcher';
 import { toRun } from './flowStages';
-
-/** What a run said: the dataflows run, or the first refusal. */
-export type Said = { text: string; refused: boolean };
 
 /**
  * Runs a case's dataflows (Reserves case plan, decision 4): one alone, those out of date in run order (each judged after
@@ -34,10 +30,10 @@ export async function runCaseDataflows(
       d = it;
     }
     const reply = await runOne(d);
-    if (reply.error) return { text: `${d.name}: ${reply.error}`, refused: true };
+    if (reply.error) return refused(`${d.name}: ${reply.error}`);
     ran.push(d.name);
   }
-  return { text: ran.length ? `Ran ${ran.join(', then ')} on ${table.name}: each its own undo.` : 'Nothing was out of date.', refused: false };
+  return ok(ran.length ? `Ran ${ran.join(', then ')} on ${table.name}: each its own undo.` : 'Nothing was out of date.');
 }
 
 /** The case the top row runs, followed as the Tables side's list opens a case or a result. */
@@ -86,7 +82,7 @@ export function CaseRun() {
     try {
       setSaid(await runCaseDataflows({ id: table.table, name: table.name }, state, what, runRecord));
     } catch (e) {
-      setSaid({ text: String(e), refused: true });
+      setSaid(refused(String(e)));
     } finally {
       setRunning(false);
     }
@@ -115,11 +111,7 @@ export function CaseRun() {
           </StatusBadge>
         ))}
       {running && <span className="text-muted-foreground">Running…</span>}
-      {said && (
-        <span className={cn('min-w-0 truncate', said.refused ? 'text-destructive' : 'text-ok')} title={said.text} data-slot="case-run-said">
-          {said.text}
-        </span>
-      )}
+      <SaidLine said={said} oneLine inline slot="case-run-said" />
     </div>
   );
 }

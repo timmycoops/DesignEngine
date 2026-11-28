@@ -1,9 +1,8 @@
 import { Copy, Plus, Table2, Workflow } from 'lucide-react';
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { type CaseHeadline, caseHeadlines, type Dataflow, dataflowStarter, objectDetails, objectsAttributes, type ParameterTable, reservesRerunParams, tableSetupView } from '@/bridge';
-import { CellInput, FilterInput, MENU_SURFACE, Select } from '@/design-system/kit';
+import { CellInput, Check, FilterInput, MENU_SURFACE, ok, refused, type Said, SaidLine, Select } from '@/design-system/kit';
 import { Button } from '@/design-system/ui/button';
-import { Checkbox } from '@/design-system/ui/checkbox';
 import { cn } from 'cn';
 import type { Attributes, When } from '../filters';
 import { useWorkspace } from '@/workspace/context';
@@ -20,7 +19,6 @@ import { againstBase, blocksFitting, EMPTY_ROW_DATAFLOW, freeName, HEADLINES, he
  */
 
 type Form = 'new' | 'copy' | 'add' | 'every' | null;
-type Said = { text: string; refused: boolean } | null;
 type Reply = { record?: { outputs: { id: string; change: string }[] }; error?: string };
 
 /** The cases' headline figures, read again whenever anything moves, and the form open under the header. */
@@ -28,7 +26,7 @@ export function useCases() {
   const { summary } = useWorkspace();
   const [heads, setHeads] = useState<CaseHeadline[]>([]);
   const [form, setForm] = useState<Form>(null);
-  const [said, setSaid] = useState<Said>(null);
+  const [said, setSaid] = useState<Said | null>(null);
   const [busy, setBusy] = useState(false);
   const changed = (summary?.objects ?? []).map((o) => `${o.id}:${o.revision}`).join(',');
   useEffect(() => {
@@ -46,10 +44,10 @@ export function useCases() {
     setBusy(true);
     setSaid(null);
     try {
-      setSaid({ text: await what(), refused: false });
+      setSaid(ok(await what()));
       setForm(null);
     } catch (e) {
-      setSaid({ text: e instanceof Error ? e.message : String(e), refused: true });
+      setSaid(refused(e instanceof Error ? e.message : String(e)));
     } finally {
       setBusy(false);
     }
@@ -179,11 +177,7 @@ export function CaseForms({ cases, open, onOpen, onOpenDataflow }: { cases: Case
   if (!form && !said) return null;
   return (
     <div className="shrink-0 border-b border-border px-2 py-1.5" data-slot="cases">
-      {said && (
-        <div className={cn('truncate', said.refused ? 'text-destructive' : 'text-ok')} title={said.text} data-slot="cases-said">
-          {said.text}
-        </div>
-      )}
+      <SaidLine said={said} oneLine slot="cases-said" />
       {form === 'every' && heads.length > 0 && (
         <table className="border-collapse tabular-nums" data-slot="cases-table">
           <thead>
@@ -375,7 +369,7 @@ function CopyCase({ busy, from, names, onMake }: { busy: boolean; from: CaseHead
       <span className="text-muted-foreground">{from?.name ?? 'The case'} as</span>
       <CellInput className="w-48 border-input" value={name} label="The copy's name" onChange={setName} />
       <label className="flex items-center gap-1">
-        <Checkbox checked={copyTables} onCheckedChange={(v) => setCopyTables(v === true)} aria-label="Copy its settings tables" />
+        <Check checked={copyTables} onChange={(v) => setCopyTables(v)} label="Copy its settings tables" />
         Copy its settings tables (else the copy shares them)
       </label>
       <Button size="sm" className="h-6 px-2" disabled={busy || !name.trim() || !from} onClick={() => onMake(name.trim(), copyTables)} data-slot="copy-case-make">

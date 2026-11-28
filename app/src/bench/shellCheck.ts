@@ -1154,6 +1154,21 @@ export async function checkShell(
     }
     expect('a tool panel says what it does in one line that fits, and its name only on its tab', headsOk, heads);
 
+    // The panels that aren't tools have their head too (Two sides plan, workstream 6): one line that fits, 28 px.
+    const others = ['layers', 'properties', 'runlog'] as const;
+    const otherHeads: Record<string, unknown> = {};
+    let othersOk = true;
+    for (const id of others) {
+      await toFront(id);
+      const head = headOf(id);
+      const line = lineOf(id);
+      const height = head ? Math.round(head.getBoundingClientRect().height) : 0;
+      const whole = !!line && line.scrollWidth <= line.clientWidth;
+      otherHeads[id] = { line: line?.textContent?.trim() ?? '', height, whole, first_at: firstAt(id) };
+      othersOk &&= !!head && height === 28 && whole && (firstAt(id) ?? 99) <= 40;
+    }
+    expect('Layers, Properties and the Run log say what they are for in a line that fits, their first control within 40 px of the tab', othersOk, otherHeads);
+
     await toFront('builder');
     const mark = headOf('builder')?.querySelector<HTMLButtonElement>('[data-slot="panel-head-more"]');
     mark?.focus();

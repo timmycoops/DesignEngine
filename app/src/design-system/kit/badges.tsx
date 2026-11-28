@@ -24,7 +24,7 @@ export function StatusBadge({ tone, children, title }: { tone: 'edited' | 'warni
 /** A small button that's only an icon, its label in its tooltip. */
 export function IconButton({ label, className, children, ...props }: { label: string; children: ReactNode } & ComponentProps<'button'>) {
   return (
-    <button type="button" className={cn('inline-flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground [&_svg]:size-3.5', className)} title={label} aria-label={label} {...props}>
+    <button type="button" className={cn('inline-flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-30 [&_svg]:size-3.5', className)} title={label} aria-label={label} {...props}>
       {children}
     </button>
   );

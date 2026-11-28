@@ -1,9 +1,8 @@
 import { FileUp, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { type RecordsReport, type RecordsTarget, recordsPreview } from '@/bridge';
-import { Choice } from '@/design-system/kit';
+import { Check, Choice, ok, refused, type Said, SaidLine } from '@/design-system/kit';
 import { Button } from '@/design-system/ui/button';
-import { Checkbox } from '@/design-system/ui/checkbox';
 import { cn } from 'cn';
 import { useWorkspace } from '@/workspace/context';
 import { fmt } from './format';
@@ -26,7 +25,7 @@ export function UpdateRecords({ target, keys, what, onClose }: { target: Records
   const [key, setKey] = useState<string[]>([]);
   const [mode, setMode] = useState<Mode>('update');
   const [report, setReport] = useState<RecordsReport | null>(null);
-  const [said, setSaid] = useState<{ error?: string; text?: string }>({});
+  const [said, setSaid] = useState<Said | null>(null);
   const [running, setRunning] = useState(false);
   const columns = csv ? csvColumns(csv.text) : [];
 
@@ -35,7 +34,7 @@ export function UpdateRecords({ target, keys, what, onClose }: { target: Records
     const text = await f.text();
     setCsv({ name: f.name, text });
     setKey(likelyKey(csvColumns(text), keys));
-    setSaid({});
+    setSaid(null);
   };
   const params = csv ? { target, csv: csv.text, key, mode } : null;
   const ask = params ? JSON.stringify({ t: target, n: csv?.name, l: csv?.text.length, key, mode }) : '';
@@ -44,7 +43,7 @@ export function UpdateRecords({ target, keys, what, onClose }: { target: Records
     let live = true;
     void recordsPreview(params)
       .then((r) => live && setReport(r))
-      .catch((e) => live && (setReport(null), setSaid({ error: String(e) })));
+      .catch((e) => live && (setReport(null), setSaid(refused(String(e)))));
     return () => {
       live = false;
     };
@@ -56,8 +55,8 @@ export function UpdateRecords({ target, keys, what, onClose }: { target: Records
     setRunning(true);
     const outcome = await runRecord('table.update_records', params);
     setRunning(false);
-    if (outcome.error) return setSaid({ error: outcome.error });
-    setSaid({ text: `${outcome.record?.messages?.[0] ?? 'Updated'}; one undo puts it back` });
+    if (outcome.error) return setSaid(refused(outcome.error));
+    setSaid(ok(`${outcome.record?.messages?.[0] ?? 'Updated'}; one undo puts it back`));
     setCsv(null);
     setReport(null);
   };
@@ -76,7 +75,7 @@ export function UpdateRecords({ target, keys, what, onClose }: { target: Records
             <span className="text-muted-foreground">Match on</span>
             {columns.map((c) => (
               <label key={c} className={cn('flex items-center gap-1', key.includes(c) ? 'text-foreground' : 'text-muted-foreground')}>
-                <Checkbox checked={key.includes(c)} onCheckedChange={(on) => setKey((k) => (on === true ? [...k, c] : k.filter((x) => x !== c)))} aria-label={`Match on ${c}`} />
+                <Check checked={key.includes(c)} onChange={(on) => setKey((k) => (on ? [...k, c] : k.filter((x) => x !== c)))} label={`Match on ${c}`} />
                 {c}
               </label>
             ))}
@@ -123,7 +122,7 @@ export function UpdateRecords({ target, keys, what, onClose }: { target: Records
           {report.changed > 8 && <span className="text-muted-foreground">and {fmt(report.changed - 8)} more</span>}
         </div>
       )}
-      {said.error ? <span className="text-destructive">{said.error}</span> : said.text ? <span className="text-ok">{said.text}</span> : null}
+      <SaidLine said={said} inline />
     </div>
   );
 }

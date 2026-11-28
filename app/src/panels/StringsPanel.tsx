@@ -1,11 +1,9 @@
 import { concealed } from '@/bridge';
-import { ArrowLeftRight, Check, MousePointerClick } from 'lucide-react';
+import { ArrowLeftRight, Check as CheckIcon, MousePointerClick } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { StepTarget } from '@/bridge';
 import { Button } from '@/design-system/ui/button';
-import { Checkbox } from '@/design-system/ui/checkbox';
-import { Input } from '@/design-system/ui/input';
-import { type Asker, AskSteps, Choice, Field, NumberInput, NumberOrBlank, resultParams, type RunReport, Select, TargetInput, type ToolAction, ToolPanel, ToolSection, useAsking, useResultAs } from '@/design-system/kit';
+import { type Asker, AskSteps, Check, Choice, Field, NumberInput, NumberOrBlank, resultParams, type RunReport, Select, TargetInput, TextInput, type ToolAction, ToolPanel, ToolSection, useAsking, useResultAs } from '@/design-system/kit';
 import { choiceWords } from '@/tools';
 import { nearestString, sideOf } from './stringSide';
 import { useWorkspace } from '@/workspace/context';
@@ -559,7 +557,7 @@ export function StringsPanel() {
   })();
   const action: ToolAction = {
     label: does.label,
-    icon: mode === 'reverse' ? <ArrowLeftRight className="size-3.5" /> : <Check className="size-3.5" />,
+    icon: mode === 'reverse' ? <ArrowLeftRight className="size-3.5" /> : <CheckIcon className="size-3.5" />,
     disabled: !does.ready,
     busy,
     title: does.title,
@@ -686,7 +684,7 @@ export function StringsPanel() {
       {mode === 'number_across' && (
         <ToolSection title="Settings">
           <Field label="Name" hint="Each string's name, with its number in place of #">
-            <Input className="h-7 w-40 px-1.5 text-xs" value={numberName} aria-label="Name of each string, # for its number" onChange={(e) => setNumberName(e.target.value)} />
+            <TextInput className="w-40" value={numberName} label="Name of each string, # for its number" onChange={(value) => setNumberName(value)} />
           </Field>
           <Field label="From">
             <NumberOrBlank value={start} onChange={setStart} label="The first number" blank="" />
@@ -700,10 +698,10 @@ export function StringsPanel() {
       {mode === 'polygons_from_lines' && (
         <ToolSection title="Settings">
           <Field label="Name" hint="Each polygon's name, numbered west to east in place of #">
-            <Input className="h-7 w-40 px-1.5 text-xs" value={polygonName} aria-label="Name of each polygon, # for its number" onChange={(e) => setPolygonName(e.target.value)} />
+            <TextInput className="w-40" value={polygonName} label="Name of each polygon, # for its number" onChange={(value) => setPolygonName(value)} />
           </Field>
           <Field label="To layer">
-            <Input className="h-7 w-40 px-1.5 text-xs" value={polygonLayer} aria-label="Layer for the polygons" onChange={(e) => setPolygonLayer(e.target.value)} />
+            <TextInput className="w-40" value={polygonLayer} label="Layer for the polygons" onChange={(value) => setPolygonLayer(value)} />
           </Field>
           <Field label="Join within" hint="An end this close to another line is joined to it, and said">
             <NumberInput value={closeWithin} onChange={setCloseWithin} label="How close an end is joined to a line" unit="mm" range={{ min: 0 }} />
@@ -769,7 +767,7 @@ export function StringsPanel() {
           </Field>
           {!onVertices && (
             <Field label="Follow" hint="Adds vertices where the string crosses the surface's triangle edges">
-              <Checkbox checked={crossings} aria-label="Follow the surface between vertices" onCheckedChange={(c) => setCrossings(c === true)} />
+              <Check checked={crossings} label="Follow the surface between vertices" onChange={(c) => setCrossings(c)} />
             </Field>
           )}
         </ToolSection>
@@ -794,7 +792,7 @@ export function StringsPanel() {
             </Button>
           </Field>
           <Field label="Wall" hint="Keeps the wall between each string and its new one, as a surface">
-            <Checkbox checked={keepWall} aria-label="Keep the wall as a surface" onCheckedChange={(c) => setKeepWall(c === true)} />
+            <Check checked={keepWall} label="Keep the wall as a surface" onChange={(c) => setKeepWall(c)} />
           </Field>
         </ToolSection>
       )}
@@ -832,10 +830,10 @@ export function StringsPanel() {
       {mode === 'surface_between' && (
         <ToolSection title="Settings">
           <Field label="Name" hint="Left blank, it's named for the strings at either side">
-            <Input className="h-7 w-40 px-1.5 text-xs" value={surfaceName} aria-label="Name of the surface" onChange={(e) => setSurfaceName(e.target.value)} />
+            <TextInput className="w-40" value={surfaceName} label="Name of the surface" onChange={(value) => setSurfaceName(value)} />
           </Field>
           <Field label="To layer" hint="Left blank, the layer of the string picked first">
-            <Input className="h-7 w-40 px-1.5 text-xs" value={surfaceLayer} aria-label="Layer for the surface" onChange={(e) => setSurfaceLayer(e.target.value)} />
+            <TextInput className="w-40" value={surfaceLayer} label="Layer for the surface" onChange={(value) => setSurfaceLayer(value)} />
           </Field>
         </ToolSection>
       )}
@@ -891,10 +889,10 @@ export function StringsPanel() {
             <Choice value={operation} options={['union', 'overlap', 'difference'] as const} labels={{ union: 'Union', overlap: 'Overlap', difference: 'Difference' }} onChange={setOperation} label="What to make of the polygons" />
           </Field>
           <Field label="Name" hint="A second part is numbered on, and a hole named for its part">
-            <Input className="h-7 px-1.5 text-xs" value={opName} placeholder={operation === 'union' ? 'Union' : operation === 'overlap' ? 'Overlap' : 'Difference'} aria-label="Name for the polygons made" onChange={(e) => setOpName(e.target.value)} />
+            <TextInput value={opName} placeholder={operation === 'union' ? 'Union' : operation === 'overlap' ? 'Overlap' : 'Difference'} label="Name for the polygons made" onChange={(value) => setOpName(value)} />
           </Field>
           <Field label="Layer">
-            <Input className="h-7 px-1.5 text-xs" value={opLayer} aria-label="Layer for the polygons made" onChange={(e) => setOpLayer(e.target.value)} />
+            <TextInput value={opLayer} label="Layer for the polygons made" onChange={(value) => setOpLayer(value)} />
           </Field>
         </ToolSection>
       )}

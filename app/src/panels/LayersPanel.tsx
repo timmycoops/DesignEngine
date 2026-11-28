@@ -2,10 +2,9 @@ import { Filter } from 'lucide-react';
 import { type MouseEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { type Colouring, concealed, type Layer, layerAttributes, layerOpacityOf, lookOf } from '@/bridge';
 import { Button } from '@/design-system/ui/button';
-import { FilterInput } from '@/design-system/kit';
+import { Check, FilterInput, PanelHead, TextInput } from '@/design-system/kit';
 import { measuresOf, whenText } from '@/filters';
 import { ROW_HEIGHT, useRowWindow } from '@/design-system/DataTable';
-import { Checkbox } from '@/design-system/ui/checkbox';
 import {
   ContextMenu,
   ContextMenuContent,
@@ -16,7 +15,6 @@ import {
   ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from '@/design-system/ui/context-menu';
-import { Input } from '@/design-system/ui/input';
 import { cn } from 'cn';
 import { useWorkspace } from '@/workspace/context';
 import { canColour, fmt } from './format';
@@ -27,17 +25,17 @@ function LineWeight({ layer }: { layer: string }) {
   const { lineWeight, setLineWeight } = useWorkspace();
   const [text, setText] = useState(lineWeight(layer)?.toString() ?? '');
   return (
-    <Input
-      className="h-5 w-9 px-1 text-xs tabular-nums"
+    <TextInput size="sm"
+      className="h-5 w-9 tabular-nums"
       value={text}
       placeholder="px"
       title="Line weight in the section (px); blank for the default"
-      aria-label="Line weight in the section"
+      label="Line weight in the section"
       onClick={(e) => e.stopPropagation()}
-      onChange={(e) => {
-        setText(e.target.value);
-        const px = Number(e.target.value);
-        setLineWeight(layer, e.target.value.trim() !== '' && Number.isFinite(px) && px > 0 ? px : null);
+      onChange={(value) => {
+        setText(value);
+        const px = Number(value);
+        setLineWeight(layer, value.trim() !== '' && Number.isFinite(px) && px > 0 ? px : null);
       }}
     />
   );
@@ -76,11 +74,12 @@ function RenameBox({ layer, onDone }: { layer: Layer; onDone: () => void }) {
     if ((await run('layer.rename', { layer: layer.name, name })) && active) setActiveLayer(name);
   };
   return (
-    <Input
+    <TextInput
+      size="sm"
       autoFocus
-      className="h-5 min-w-0 flex-1 px-1 text-xs"
+      className="h-5 flex-1"
       defaultValue={layer.name}
-      aria-label={`New name for ${layer.name}`}
+      label={`New name for ${layer.name}`}
       onClick={(e) => e.stopPropagation()}
       ref={(box) => {
         // After the menu that opened this has let go of the focus.
@@ -129,7 +128,7 @@ function LayerRow({ entry: { layer, objects, hidden, concealed: notShowing, pick
       onClick={() => setActiveLayer(layer.name)}
       title={`${layer.name}${kinds ? `: ${kinds}` : ''}. Click to draw new strings on this layer; right-click for more`}
     >
-      <Checkbox checked={tick} onClick={(e) => e.stopPropagation()} onCheckedChange={(checked) => tickLayer(checked === true)} aria-label={`Show ${layer.name}`} />
+      <Check checked={tick} onClick={(e) => e.stopPropagation()} onChange={(checked) => tickLayer(checked)} label={`Show ${layer.name}`} />
       <Swatch layer={layer} />
       {renaming ? <RenameBox layer={layer} onDone={onRenamed} /> : <span className={cn('min-w-0 shrink-0 truncate', active && 'text-primary')} style={{ maxWidth: '55%' }}>{layer.name}</span>}
       {picked > 0 && (
@@ -289,6 +288,7 @@ export function LayersPanel() {
 
   return (
     <div className="flex h-full flex-col">
+      <PanelHead line="Tick to show; right-click for more" more="A row a layer, clicked to draw new strings on it, saying what's on it by kind. Right-click a layer to zoom to it, select or filter what's on it, isolate it, change its look, rename or delete it. An object is found by name in the Objects table." />
       <DrawOn />
       {filteringRow && <FilterBar entry={filteringRow} onChange={(when) => setLayerFilter(filteringRow.layer.id, when)} onDone={() => setFiltering(null)} />}
       <ContextMenu>
@@ -356,12 +356,12 @@ function DrawOn() {
   return (
     <label className="flex items-center gap-2 border-b px-2 py-1.5 text-xs text-muted-foreground">
       Draw on
-      <Input
-        className="h-6 flex-1 px-1.5 text-xs"
+      <TextInput size="sm"
+        className="flex-1"
         value={activeLayer}
-        onChange={(e) => setActiveLayer(e.target.value)}
+        onChange={(value) => setActiveLayer(value)}
         onBlur={(e) => !e.target.value.trim() && setActiveLayer('design')}
-        title="New strings go on this layer; it is created with the first string"
+        title="New strings go on this layer; it is created with the first string" label="New strings go on this layer; it is created with the first string"
       />
     </label>
   );
