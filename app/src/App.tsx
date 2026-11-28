@@ -80,7 +80,7 @@ import { FindCommand } from './workspace/FindCommand';
 import { Ribbon, type StageId } from './workspace/Ribbon';
 import { rememberSide, rememberStage, sideOf, stageOf } from './workspace/stage';
 import { openItem } from './workspace/tablesSide';
-import type { Showing } from './tools';
+import type { Side } from './tools';
 import type { ToolUse } from './workspace/ToolMenu';
 import type { WorksOn } from './panels/worksOn';
 import { onLook } from './viewport/look';
@@ -265,7 +265,7 @@ export default function App() {
     setBlocksColouredBy(null);
     setFieldColoured(null);
     void syncRef.current?.colourBlocks(null);
-    void syncRef.current?.showHorizon(id, code, variable).then(() => setStatus({ text: `Showing ${code}, coloured by ${variable ?? 'thickness'}` }));
+    void syncRef.current?.showHorizon(id, code, variable).then(() => setStatus({ text: `Side ${code}, coloured by ${variable ?? 'thickness'}` }));
   }, []);
 
   const colourSeamBlocks = useCallback((view: SeamShown | null) => {
@@ -548,8 +548,8 @@ export default function App() {
   }, []);
   // The side of the app in front, Design or Tables (decision 0108), remembered for each project the same way. A panel
   // of the other side asked for switches it too (the workspace says so through `onSide`).
-  const [side, setSideState] = useState<Showing>(() => sideOf(null));
-  const setSide = useCallback((next: Showing) => {
+  const [side, setSideState] = useState<Side>(() => sideOf(null));
+  const setSide = useCallback((next: Side) => {
     setSideState(next);
     rememberSide(summaryRef.current?.path ?? null, next);
   }, []);

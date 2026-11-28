@@ -56,7 +56,7 @@ export function TablesSidePanel() {
   const caseShown = section === 'case' || section === 'results' ? id : null;
   // The list folds to its six numbers, for the room a case's three columns want on a narrow window.
   const [foldedByHand, setFolded] = useState(foldedAtStart);
-  // Narrower than this, as beside the view in Both (decision 0109), the list folds by itself: the item wants the room.
+  // Narrower than this, as in a small window of its own, the list folds by itself: the item wants the room.
   const box = useRef<HTMLDivElement>(null);
   const [narrow, setNarrow] = useState(false);
   useEffect(() => {

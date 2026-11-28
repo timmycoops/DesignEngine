@@ -15,8 +15,6 @@ export type Stage = 'project' | 'strings' | 'walls' | 'surfaces' | 'solids' | 'g
 
 /** The two sides of the app (decision 0108): design work in the view, and table work on to the schedule. */
 export type Side = 'design' | 'tables';
-/** What the window shows (decision 0109): one side, or both at once, the Tables side beside the view. */
-export type Showing = Side | 'both';
 
 /** The Design side's groups, a tab each on the ribbon, in the order the work is done. */
 export const STAGES: readonly { id: Group; title: string }[] = [

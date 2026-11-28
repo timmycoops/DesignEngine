@@ -12,11 +12,8 @@ export type PanelId = 'layers' | 'properties' | 'strings' | 'from_surfaces' | 's
  */
 export type Dock = 'left' | 'tools' | 'inspector' | 'results' | 'document' | 'item';
 
-/**
- * The side of the app a panel is on (decision 0108): Design for the view's work, Tables for the table work. `both` is
- * kept for a panel that moves to whichever side asks for it; none does since the Tables side has its own list.
- */
-export type PanelSide = 'design' | 'tables' | 'both';
+/** The side of the app a panel is on (decision 0108): Design for the view's work, Tables for the table work. */
+export type PanelSide = 'design' | 'tables';
 
 /** The tool dock's width: one width, so the view is as wide with every tool open as with one. */
 export const TOOL_DOCK_WIDTH = 400;

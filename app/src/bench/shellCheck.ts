@@ -139,7 +139,7 @@ export async function checkShell(
       await settle();
     };
     /** Design or Tables, by the switch on the ribbon (decision 0108). */
-    const goSide = async (side: 'design' | 'both' | 'tables') => {
+    const goSide = async (side: 'design' | 'tables') => {
       document.querySelector<HTMLButtonElement>(`[data-slot="side-switch"] [data-side="${side}"]`)?.click();
       await settle();
     };
@@ -263,29 +263,13 @@ export async function checkShell(
       { sections: sectionsListed, opened: itemsOpened, filling_the_window: tablesWhole, run_on_top: runOnTop, tool_row_away: toolRowAway },
     );
     await goSide('design');
-    // Both (decision 0109): the Tables side beside the view on its right, Design's tools and the case's Run on the ribbon.
+    // No Both (Tim, 28 Nov): the switch is Design or Tables, and the Tables side pops out from beside it.
     const viewOnDesign = tables.width;
-    await goSide('both');
-    const bothView = api.getPanel('viewport')?.group.element.getBoundingClientRect();
-    const tablesGroupNow = api.getPanel('tables')?.group;
-    const tablesBox = tablesGroupNow?.element.getBoundingClientRect();
-    const bothSaid = {
-      side: sideNow(),
-      view: bothView ? Math.round(bothView.width) : 0,
-      tables: tablesBox ? { left: Math.round(tablesBox.left), width: Math.round(tablesBox.width) } : null,
-      view_right: bothView ? Math.round(bothView.right) : 0,
-      filling: tablesGroupNow?.api.isMaximized() ?? null,
-      tool_row: shownEl(document.querySelector('[data-slot="tool-row"]')),
-      run: !!document.querySelector('[data-slot="ribbon"] [data-slot="case-run"]'),
-      slot_right: Math.round(api.getPanel('properties')?.group.element.getBoundingClientRect().left ?? 0),
+    const switchSaid = {
+      sides: [...document.querySelectorAll<HTMLElement>('[data-slot="side-switch"] [data-side]')].map((e) => e.dataset.side ?? ''),
+      pop_beside: shownEl(document.querySelector('[data-slot="ribbon"] [data-slot="ribbon-pop"]')),
     };
-    expect(
-      "Both: the Tables side beside the view on its right, the view still there, the tool slot after them, Design's tools and the case's Run on the ribbon",
-      bothSaid.side === 'both' && !!tablesBox && !!bothView && Math.abs(tablesBox.left - bothView.right) <= 2 && bothSaid.view > 300 && tablesBox.width > 300 && bothSaid.filling === false && bothSaid.tool_row && bothSaid.run && bothSaid.slot_right >= Math.round(tablesBox.right) - 2,
-      bothSaid,
-    );
-    await goSide('design');
-    expect('from Both back to Design, the view has its room again and the Tables side is away', Math.abs(size().width - viewOnDesign) <= 10 && !(api.getPanel('tables')?.group.api.isVisible ?? false), { view: size().width, was: viewOnDesign });
+    expect('the switch reads Design and Tables only, the Tables side popped out from the button beside it', switchSaid.sides.join() === 'design,tables' && switchSaid.pop_beside, switchSaid);
 
     // The Tables side popped out into a window of its own (decision 0109), from Tables: Design in the main window with
     // the case's Run on its ribbon; a click there works; Ctrl+K pressed there opens Find a command; its button brings it
@@ -329,7 +313,7 @@ export async function checkShell(
       return n;
     };
     const backSaid = { where: tablesWhere(), page_main: tablesPage() === document, shown: api.getPanel('tables')?.group.api.isVisible ?? null, side: sideNow(), windows_left: await windowsLeft() };
-    expect('its button brings it back: the Tables side in the main window again, away on Design, its window closed', backSaid.where === 'grid' && backSaid.page_main && backSaid.shown === false && backSaid.side === 'design' && backSaid.windows_left === 0, backSaid);
+    expect('its button brings it back: the Tables side in the main window again, on Tables filling it, its window closed', backSaid.where === 'grid' && backSaid.page_main && backSaid.shown === true && backSaid.side === 'tables' && (api.getPanel('tables')?.group.api.isMaximized() ?? false) && backSaid.windows_left === 0, backSaid);
     await goSide('tables');
     popButton()?.click();
     for (let k = 0; k < 100 && tablesWhere() !== 'popout'; k++) await wait(100);
@@ -341,6 +325,30 @@ export async function checkShell(
     const askedBack = { out_again: outAgain, where: tablesWhere(), filling: api.getPanel('tables')?.group.api.isMaximized() ?? false, side: sideNow(), windows_left: await windowsLeft() };
     expect('Tables asked for while it is out brings it back, filling the window, its window closed', askedBack.out_again === 'popout' && askedBack.where === 'grid' && askedBack.filling && askedBack.side === 'tables' && askedBack.windows_left === 0, askedBack);
     await goSide('design');
+
+    // Popped out from Design, by the ribbon's button beside the switch: the main window stays on Design with the view at
+    // its width; the same button brings it back on Tables. Closed by its own X, it goes away and Design stays.
+    const ribbonPop = () => document.querySelector<HTMLElement>('[data-slot="ribbon"] [data-slot="ribbon-pop"]');
+    ribbonPop()?.click();
+    for (let k = 0; k < 100 && tablesWhere() !== 'popout'; k++) await wait(100);
+    await settle();
+    const fromDesign = { where: tablesWhere(), own_window: tablesPage() !== document, side: sideNow(), view: size().width, button: ribbonPop()?.dataset.popped ?? '' };
+    expect('from Design the ribbon pops the Tables side out, the main window kept on Design with the view at its width', fromDesign.where === 'popout' && fromDesign.own_window && fromDesign.side === 'design' && Math.abs(fromDesign.view - viewOnDesign) <= 10 && fromDesign.button === 'yes', { ...fromDesign, was: viewOnDesign });
+    ribbonPop()?.click();
+    for (let k = 0; k < 100 && tablesWhere() === 'popout'; k++) await wait(100);
+    await settle();
+    const ribbonBack = { where: tablesWhere(), side: sideNow(), filling: api.getPanel('tables')?.group.api.isMaximized() ?? false, windows_left: await windowsLeft() };
+    expect('the same button brings it back into the main window, on Tables filling it, its window closed', ribbonBack.where === 'grid' && ribbonBack.side === 'tables' && ribbonBack.filling && ribbonBack.windows_left === 0, ribbonBack);
+    await goSide('design');
+    ribbonPop()?.click();
+    for (let k = 0; k < 100 && tablesWhere() !== 'popout'; k++) await wait(100);
+    await settle();
+    // Its X: the app window closed from outside, as the shell does when it's shut.
+    for (const w of (await getAllWebviewWindows()).filter((w) => w.label.startsWith('popout-'))) await w.destroy().catch(() => undefined);
+    for (let k = 0; k < 100 && tablesWhere() === 'popout'; k++) await wait(100);
+    await settle();
+    const byX = { where: tablesWhere(), side: sideNow(), shown: api.getPanel('tables')?.group.api.isVisible ?? null, view: size().width, windows_left: await windowsLeft() };
+    expect('closed by its X it goes back into the main window and away, Design kept with the view at its width', byX.where === 'grid' && byX.side === 'design' && byX.shown === false && Math.abs(byX.view - viewOnDesign) <= 10 && byX.windows_left === 0, { ...byX, was: viewOnDesign });
 
     // A tool closed, its dock minimised, and the tool asked for from the toolbar.
     const slotName = api.getPanel('reserves')?.title ?? '';

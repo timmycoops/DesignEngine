@@ -3,7 +3,7 @@
  * machine (decisions 0076, 0108): by the project's path, with one for a project not saved yet. It's how the window
  * looks, like the layout, so it stays out of the project file. Kept free of React, so the tests can read it.
  */
-import { type Group, type Showing, STAGES } from '../tools.ts';
+import { type Group, type Side, STAGES } from '../tools.ts';
 
 const STAGE_KEY = 'zd.ribbon.stage.v1';
 const SIDE_KEY = 'zd.side.v1';
@@ -11,7 +11,8 @@ const SIDE_KEY = 'zd.side.v1';
 const MOST = 50;
 
 const isGroup = (value: unknown): value is Group => STAGES.some((s) => s.id === value);
-const isSide = (value: unknown): value is Showing => value === 'design' || value === 'tables' || value === 'both';
+// Both, remembered before it was taken out (decision 0109), reads as Design.
+const isSide = (value: unknown): value is Side => value === 'design' || value === 'tables';
 
 /** What's remembered under `key`, a project's path to its value, newest last; anything that isn't one dropped. */
 function remembered<T>(storage: Pick<Storage, 'getItem'>, key: string, is: (v: unknown) => v is T): [string, T][] {
@@ -42,10 +43,10 @@ export function rememberStage(path: string | null, stage: Group, storage: Pick<S
 }
 
 /** The side a project was last left on: Design for one never opened here. */
-export function sideOf(path: string | null, storage: Pick<Storage, 'getItem'> = localStorage): Showing {
+export function sideOf(path: string | null, storage: Pick<Storage, 'getItem'> = localStorage): Side {
   return remembered(storage, SIDE_KEY, isSide).find(([p]) => p === (path ?? ''))?.[1] ?? 'design';
 }
 
-export function rememberSide(path: string | null, side: Showing, storage: Pick<Storage, 'getItem' | 'setItem'> = localStorage): void {
+export function rememberSide(path: string | null, side: Side, storage: Pick<Storage, 'getItem' | 'setItem'> = localStorage): void {
   remember(storage, SIDE_KEY, isSide, path, side);
 }

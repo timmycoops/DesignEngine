@@ -28,10 +28,12 @@ changes the map here first, in its own decision.
   is an item in `PANELS` (`dock: 'item'`), so Find a command and `showPanel` open it there; what's open and the case
   the top row runs live in `tablesSide.ts`. The 3D view only on demand: Show in 3D on the case's picked block. The
   picked unit opens under its row in the units table (0107).
-- **Both** (0109): Design's layout with the Tables panel beside the view on its right, the ribbon showing Design's rows
-  and the case and Run together; a block picked on the case's map is picked in the view. The switch reads Design ·
-  Both · Tables. The Tables side pops out into a window of its own (its list's head, dockview's pop-out into an app
-  window the shell makes, `on_new_window`): a menu, list or tip opens in the window it's used in (`PortalRoot`, or the
+- **Both at once, by the pop-out** (0109): the switch reads Design · Tables, with no Both (taken out on Tim's word, 28
+  Nov). To see the table work and the design together, the Tables side pops out into a window of its own, from the
+  ribbon's button beside the switch or its list's head (dockview's pop-out into an app window the shell makes,
+  `on_new_window`); the main window stays on Design with the case and Run on its ribbon, and a block picked on the
+  case's map is picked in the view. Brought back by either button or Tables on the switch, it's on Tables in the main
+  window; closed by its X, Design stays. A menu, list or tip opens in the window it's used in (`PortalRoot`, or the
   kit list's own box's page), so a new one drawn into a portal must do the same; keys there reach the app's shortcuts.
 - **One home each:**
   - What a tool works on (Picked, Its layer, On show): the foot of the view (`WorksOnBar`, `panels/worksOn.ts`); Cut
@@ -96,7 +98,7 @@ has along its top the project menu (`PROJECT_MENU`), the Design or Tables switch
 remembered a project), and on Design a tab a group (Strings · Walls · Surfaces · Solids · Geology) over the row of that
 group's tools, named in words, with `EDIT_ROW` (Move, Rotate, Mirror, Delete) at its end. The rows are `ROWS` in the
 tool list, a row too long folds into More, the tool in use is lit, and switching group changes the row only. A tool is
-on one row; a new tool goes on its group's row there. A panel names its side in `PANELS` (`side`: `tables`, `both`, or
+on one row; a new tool goes on its group's row there. A panel names its side in `PANELS` (`side`: `tables`, or
 Design by default): asking for one on the other side switches side. Find a command (Ctrl+K, `FindCommand.tsx`) searches
 the list by whole words, so a tool's name and its line are what it's found by: write them in the words a planner would
 type. Properties shows only: an object's name, look, attributes, measures and history. A command on an object is a tool

@@ -106,13 +106,6 @@ export function onItem(f: () => void): () => void {
   return () => listeners.delete(f);
 }
 
-/** What the window shows, set by the workspace as it changes (decision 0109): the case's picks go to the view in Both. */
-let showing: 'design' | 'tables' | 'both' = 'design';
-export const showingNow = () => showing;
-export const setShowing = (now: 'design' | 'tables' | 'both') => {
-  showing = now;
-};
-
 /**
  * Whether the Tables side is in a window of its own (decision 0109), set by the workspace from its layout, and the way
  * to pop it out or bring it back, which the workspace gives.
@@ -129,10 +122,10 @@ export const setPopper = (p: typeof popper) => {
   popper = p;
 };
 /**
- * Whether the view is on screen beside the Tables side: both shown, or the Tables side popped out with the view in the
- * main window. The case's picks go to the view then, and Show in 3D frames there without leaving the case (0109).
+ * Whether the view is on screen beside the Tables side: with the Tables side popped out, the view in the main window.
+ * The case's picks go to the view then, and Show in 3D frames there without leaving the case (0109).
  */
-export const viewBeside = () => showing === 'both' || popped;
+export const viewBeside = () => popped;
 /** The Tables side into a window of its own, for a second monitor. */
 export const popOut = () => popper?.out();
 /** The Tables side back into the main window. */
@@ -143,6 +136,5 @@ export function resetItems() {
   open = { section: 'case', id: null };
   caseNow = null;
   last.clear();
-  showing = 'design';
   popped = false;
 }

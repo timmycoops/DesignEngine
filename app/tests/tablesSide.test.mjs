@@ -2,7 +2,7 @@
 // case the top row runs following what's opened. Run with `pnpm test`.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { caseOpen, itemNow, listOf, OBJECTS, onItem, openItem, resetItems, SECTIONS, sectionOf, setCase, setShowing, showingNow } from '../src/workspace/tablesSide.ts';
+import { caseOpen, itemNow, listOf, OBJECTS, onItem, openItem, resetItems, SECTIONS, sectionOf, setCase } from '../src/workspace/tablesSide.ts';
 import { isItem, PANELS } from '../src/workspace/panels.ts';
 
 const objects = [
@@ -93,24 +93,10 @@ test("each of the list's sections is an item for Find a command, opened in the T
   );
 });
 
-test('what the window shows is told to the Tables side, so a pick goes to the view only with both shown (0109)', () => {
-  assert.equal(showingNow(), 'design');
-  setShowing('both');
-  assert.equal(showingNow(), 'both');
-  setShowing('tables');
-  assert.equal(showingNow(), 'tables');
-  setShowing('design');
-});
-
-test('the view is beside the Tables side with both shown or with it popped out, so the case picks in the view then (0109)', async () => {
+test('the view is beside the Tables side only with it popped out, so the case picks in the view then (0109, no Both)', async () => {
   const { setPopped, viewBeside } = await import('../src/workspace/tablesSide.ts');
   resetItems();
-  assert.equal(viewBeside(), false, 'on Design the case is away');
-  setShowing('tables');
-  assert.equal(viewBeside(), false, 'on Tables the view is away');
-  setShowing('both');
-  assert.equal(viewBeside(), true);
-  setShowing('design');
+  assert.equal(viewBeside(), false, 'on Design or Tables in one window, the case and the view are never both on screen');
   setPopped(true);
   assert.equal(viewBeside(), true, 'popped out: the main window on Design shows the view, the case in its own window');
   resetItems();
