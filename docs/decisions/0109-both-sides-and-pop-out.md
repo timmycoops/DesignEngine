@@ -64,7 +64,10 @@ The map of places in `.claude/rules/app-ui.md` gains both.
   case and Run kept on its ribbon. The empty group dockview leaves behind is hidden, so the view has its room.
 - **Back:** the same button, the window's X, or Tables or Both on the switch close the window; dockview puts the panel
   back and the side as it stands is put on the layout (`backFromWindow`); the main window takes the focus again
-  (`core:window:allow-set-focus`).
+  (`core:window:allow-set-focus`). The app window it was in is closed too (`closePoppedWindows`,
+  `core:window:allow-destroy`): closing its page, as the switch and its button do, left the window standing empty and
+  black (Tim, 28 November); the shell bench now counts the windows left after each way back (none, where 1 and then 2
+  were left without the fix).
 - **Menus, lists and tips open in the window they're used in**: the kit's Select and FilterInput draw into their box's
   own page, and the dropdown, right-click and tooltip wrappers into the page `PortalRoot` gives
   (`design-system/portalRoot.ts`), which the Tables side sets while it's out.

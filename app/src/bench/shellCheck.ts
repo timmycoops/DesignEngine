@@ -25,6 +25,7 @@ import { objectDetails, openProject, projectSummary, type ProjectSummary, runCom
 import type { SectionView } from '../viewport/section';
 import { BAR_CLEAR } from '../viewport/sectionGrid';
 import type { Viewport } from '../viewport/Viewport';
+import { getAllWebviewWindows } from '@tauri-apps/api/webviewWindow';
 import { windowPicture } from './windowPicture';
 import { rowName, ROWS, STAGES, toolByKey, TOOLS } from '../tools';
 import type { StageId } from '../workspace/Ribbon';
@@ -317,8 +318,18 @@ export async function checkShell(
     popButton()?.click();
     for (let k = 0; k < 100 && tablesWhere() === 'popout'; k++) await wait(100);
     await settle();
-    const backSaid = { where: tablesWhere(), page_main: tablesPage() === document, shown: api.getPanel('tables')?.group.api.isVisible ?? null, side: sideNow() };
-    expect('its button brings it back: the Tables side in the main window again, away on Design', backSaid.where === 'grid' && backSaid.page_main && backSaid.shown === false && backSaid.side === 'design', backSaid);
+    // The app window it was in is gone too, not left standing empty (Tim, 28 Nov).
+    const popWindows = async () => (await getAllWebviewWindows()).filter((w) => w.label.startsWith('popout-')).length;
+    const windowsLeft = async () => {
+      let n = await popWindows();
+      for (let k = 0; k < 30 && n > 0; k++) {
+        await wait(100);
+        n = await popWindows();
+      }
+      return n;
+    };
+    const backSaid = { where: tablesWhere(), page_main: tablesPage() === document, shown: api.getPanel('tables')?.group.api.isVisible ?? null, side: sideNow(), windows_left: await windowsLeft() };
+    expect('its button brings it back: the Tables side in the main window again, away on Design, its window closed', backSaid.where === 'grid' && backSaid.page_main && backSaid.shown === false && backSaid.side === 'design' && backSaid.windows_left === 0, backSaid);
     await goSide('tables');
     popButton()?.click();
     for (let k = 0; k < 100 && tablesWhere() !== 'popout'; k++) await wait(100);
@@ -327,8 +338,8 @@ export async function checkShell(
     await goSide('tables');
     for (let k = 0; k < 100 && tablesWhere() === 'popout'; k++) await wait(100);
     await settle();
-    const askedBack = { out_again: outAgain, where: tablesWhere(), filling: api.getPanel('tables')?.group.api.isMaximized() ?? false, side: sideNow() };
-    expect('Tables asked for while it is out brings it back, filling the window', askedBack.out_again === 'popout' && askedBack.where === 'grid' && askedBack.filling && askedBack.side === 'tables', askedBack);
+    const askedBack = { out_again: outAgain, where: tablesWhere(), filling: api.getPanel('tables')?.group.api.isMaximized() ?? false, side: sideNow(), windows_left: await windowsLeft() };
+    expect('Tables asked for while it is out brings it back, filling the window, its window closed', askedBack.out_again === 'popout' && askedBack.where === 'grid' && askedBack.filling && askedBack.side === 'tables' && askedBack.windows_left === 0, askedBack);
     await goSide('design');
 
     // A tool closed, its dock minimised, and the tool asked for from the toolbar.
