@@ -7,6 +7,8 @@ import { Separator } from '@/design-system/ui/separator';
 import { ALWAYS_ROW, EDIT_ROW, type Group, panelTool, PROJECT_MENU, type RowItem, type RowMenu, ROWS, rowName, type Showing, STAGES, toolByKey } from '@/tools';
 import { PANELS } from './panels';
 import { CaseRun } from '@/panels/CaseRun';
+import { useSyncExternalStore } from 'react';
+import { onItem, poppedNow } from './tablesSide';
 import { BarTool, RowMenuItems, RowToolItem, type ToolUse } from './ToolMenu';
 import { IconNamed } from './toolIcons';
 import { toolShortcut } from '@/viewport/viewControls';
@@ -256,6 +258,8 @@ export function Ribbon({
 }) {
   // Both shows Design's tools and the Tables side's case and Run together (decision 0109).
   const design = side !== 'tables';
+  // The Tables side in a window of its own keeps the case and its Run on the main window's ribbon (decision 0109).
+  const popped = useSyncExternalStore(onItem, poppedNow);
   return (
     <header data-slot="ribbon" data-side={side} className="shrink-0 border-b bg-card">
       <div data-slot="tab-row" className="flex h-[31px] items-center gap-0.5 px-2">
@@ -268,7 +272,7 @@ export function Ribbon({
         ))}
         <SideSwitch side={side} onSide={onSide} />
         {/* The one place on the Tables side to run (decision 0108, workstream 4). */}
-        {side !== 'design' && <CaseRun />}
+        {(side !== 'design' || popped) && <CaseRun />}
         {design && (
           <div role="tablist" aria-label="Groups of design tools" className="ml-2 flex h-full items-stretch">
             {STAGES.map((s) => (

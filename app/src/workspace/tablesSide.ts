@@ -113,6 +113,26 @@ export const setShowing = (now: 'design' | 'tables' | 'both') => {
   showing = now;
 };
 
+/**
+ * Whether the Tables side is in a window of its own (decision 0109), set by the workspace from its layout, and the way
+ * to pop it out or bring it back, which the workspace gives.
+ */
+let popped = false;
+let popper: { out: () => void; back: () => void } | null = null;
+export const poppedNow = () => popped;
+export function setPopped(now: boolean) {
+  if (now === popped) return;
+  popped = now;
+  for (const f of listeners) f();
+}
+export const setPopper = (p: typeof popper) => {
+  popper = p;
+};
+/** The Tables side into a window of its own, for a second monitor. */
+export const popOut = () => popper?.out();
+/** The Tables side back into the main window. */
+export const popBack = () => popper?.back();
+
 /** For the tests: back to as it starts. */
 export function resetItems() {
   open = { section: 'case', id: null };

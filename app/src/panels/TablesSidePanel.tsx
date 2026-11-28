@@ -1,10 +1,11 @@
-import { ChevronsLeft, ChevronsRight } from 'lucide-react';
+import { ChevronsLeft, ChevronsRight, PictureInPicture2, SquareArrowOutUpRight } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { ObjectMenu, PanelHead } from '@/design-system/kit';
 import { cn } from 'cn';
 import { type CaseHeadline, type ObjectSummary } from '@/bridge';
 import { useWorkspace } from '@/workspace/context';
-import { itemNow, type ListRow, listOf, OBJECTS, onItem, openItem, SECTIONS, type Section } from '@/workspace/tablesSide';
+import { itemNow, type ListRow, listOf, OBJECTS, onItem, openItem, popBack, popOut, poppedNow, SECTIONS, type Section } from '@/workspace/tablesSide';
+import { PortalRoot } from '@/design-system/portalRoot';
 import { BlockTable } from './BlockTablePanel';
 import { useCases } from './CasesBar';
 import { Parameters } from './ParametersPanel';
@@ -66,6 +67,26 @@ export function TablesSidePanel() {
     return () => seen.disconnect();
   }, []);
   const folded = foldedByHand || narrow;
+  // In a window of its own (decision 0109): its menus and lists open on its page, not the main window's.
+  const popped = useSyncExternalStore(onItem, poppedNow);
+  const [page, setPage] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setPage(popped ? (box.current?.ownerDocument.body ?? null) : null));
+    return () => cancelAnimationFrame(frame);
+  }, [popped]);
+  const windowButton = (
+    <button
+      type="button"
+      className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+      onClick={() => (popped ? popBack() : popOut())}
+      title={popped ? 'Back into the main window' : 'Pop out into a window of its own, for a second monitor'}
+      aria-label={popped ? 'Back into the main window' : 'Pop out'}
+      data-slot="tables-pop"
+      data-popped={popped ? 'yes' : 'no'}
+    >
+      {popped ? <PictureInPicture2 className="size-3.5" /> : <SquareArrowOutUpRight className="size-3.5" />}
+    </button>
+  );
   const fold = (to: boolean) => {
     setFolded(to);
     try {
@@ -78,80 +99,84 @@ export function TablesSidePanel() {
   const byId = new Map((summary?.objects ?? []).map((o) => [o.id, o]));
 
   return (
-    <div ref={box} className="flex h-full min-h-0 text-xs" data-tool-panel="tables-side" data-section={section} data-item={id ?? ''} data-narrow={narrow ? 'yes' : 'no'}>
-      {folded && (
-        <nav className="flex w-8 shrink-0 flex-col items-center gap-1 border-r border-border bg-card py-1" aria-label="Tables, down the chain, folded" data-slot="tables-list" data-folded="yes">
-          {!narrow && (
-            <button type="button" className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => fold(false)} title="Open the list" aria-label="Open the list" data-slot="tables-list-fold">
-              <ChevronsRight className="size-3.5" />
-            </button>
-          )}
-          {SECTIONS.map((s, n) => (
-            <button key={s.id} type="button" className={cn('w-6 rounded py-0.5 text-center tabular-nums hover:bg-accent', section === s.id && 'bg-selection font-semibold text-primary')} onClick={() => openItem(s.id)} title={`${n + 1} · ${s.title}: ${s.tip}`} data-slot="tables-section-folded" data-section={s.id}>
-              {n + 1}
-            </button>
-          ))}
-        </nav>
-      )}
-      <nav className={cn('flex w-56 shrink-0 flex-col overflow-auto border-r border-border bg-card', folded && 'hidden')} aria-label="Tables, down the chain" data-slot="tables-list">
-        <div className="flex items-center justify-between border-b border-border px-2 py-1">
-          <span className="font-semibold">Down the chain</span>
-          <button type="button" className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => fold(true)} title="Fold the list to its numbers, for the room" aria-label="Fold the list" data-slot="tables-list-fold">
-            <ChevronsLeft className="size-3.5" />
-          </button>
-        </div>
-        {SECTIONS.map((s, n) => (
-          <div key={s.id} className="pb-1" data-slot="tables-section" data-section={s.id}>
-            <button
-              type="button"
-              className={cn('flex w-full items-baseline justify-between px-2 pt-2 pb-0.5 text-left text-[11px] font-semibold text-muted-foreground uppercase hover:text-foreground', section === s.id && 'text-foreground')}
-              title={s.tip}
-              onClick={() => openItem(s.id)}
-              data-slot="tables-section-head"
-              data-section={s.id}
-            >
-              <span>
-                {n + 1} · {s.title}
-              </span>
-              {s.id === 'inputs' && <span className="font-normal normal-case">from Design</span>}
-            </button>
-            {rows
-              .filter((r) => r.section === s.id)
-              .map((r) => (
-                <ListItem
-                  key={`${r.section}:${r.id}`}
-                  row={r}
-                  lit={section === r.section && id === r.id}
-                  head={r.section === 'case' && r.id ? heads.get(r.id) : undefined}
-                  object={(r.section === 'dataflows' || r.section === 'params') && r.id ? byId.get(r.id) : undefined}
-                />
-              ))}
-            {s.id === 'case' && cases.heads.length === 0 && <div className="px-3 text-muted-foreground">none yet: + in a case's header, or New case</div>}
-            {s.id === 'dataflows' && (
-              <button type="button" className={cn('block w-full truncate py-0.5 pl-3 text-left text-muted-foreground hover:bg-accent hover:text-foreground', section === 'dataflows' && id === NEW_SCRIPT && 'bg-selection text-primary')} onClick={() => openItem('dataflows', NEW_SCRIPT)} data-slot="new-script">
-                + New script
+    <PortalRoot.Provider value={page}>
+      <div ref={box} className="flex h-full min-h-0 text-xs" data-tool-panel="tables-side" data-section={section} data-item={id ?? ''} data-narrow={narrow ? 'yes' : 'no'}>
+        {folded && (
+          <nav className="flex w-8 shrink-0 flex-col items-center gap-1 border-r border-border bg-card py-1" aria-label="Tables, down the chain, folded" data-slot="tables-list" data-folded="yes">
+            {!narrow && (
+              <button type="button" className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => fold(false)} title="Open the list" aria-label="Open the list" data-slot="tables-list-fold">
+                <ChevronsRight className="size-3.5" />
               </button>
             )}
-          </div>
-        ))}
-      </nav>
-      <main className="flex min-w-0 flex-1 flex-col" data-slot="tables-item-view">
-        {section === 'inputs' && (id === OBJECTS || !id ? <BlockTable /> : <ReservesTable key={id} tableId={id} picker={null} onDeleted={() => openItem('inputs', OBJECTS)} />)}
-        {section === 'results' && id && <ReservesTable key={id} tableId={id} picker={null} onDeleted={() => openItem('results', null)} />}
-        {section === 'results' && !id && <Empty words="No results yet: a case's run makes its reserves table." />}
-        {section === 'schedule' && <Schedule />}
-        {seen.has('case') && (
-          <div className={cn('min-h-0 flex-1', section !== 'case' && 'hidden')}>
-            {cases.heads.length > 0 ? <ReservesCasePanel caseTable={section === 'case' ? id : caseShown} /> : <Empty words="No case yet. A case is a reserves table: make one from a block layer with New case (the + in a case's header) or from Python." />}
-          </div>
+            {windowButton}
+            {SECTIONS.map((s, n) => (
+              <button key={s.id} type="button" className={cn('w-6 rounded py-0.5 text-center tabular-nums hover:bg-accent', section === s.id && 'bg-selection font-semibold text-primary')} onClick={() => openItem(s.id)} title={`${n + 1} · ${s.title}: ${s.tip}`} data-slot="tables-section-folded" data-section={s.id}>
+                {n + 1}
+              </button>
+            ))}
+          </nav>
         )}
-        {seen.has('params') && (
-          <div className={cn('min-h-0 flex-1', section !== 'params' && section !== 'dataflows' && 'hidden')}>
-            <Parameters shown={section === 'params' || section === 'dataflows' ? id : null} list={false} />
+        <nav className={cn('flex w-56 shrink-0 flex-col overflow-auto border-r border-border bg-card', folded && 'hidden')} aria-label="Tables, down the chain" data-slot="tables-list">
+          <div className="flex items-center justify-between border-b border-border px-2 py-1">
+            <span className="font-semibold">Down the chain</span>
+            <span className="ml-auto mr-1">{windowButton}</span>
+            <button type="button" className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => fold(true)} title="Fold the list to its numbers, for the room" aria-label="Fold the list" data-slot="tables-list-fold">
+              <ChevronsLeft className="size-3.5" />
+            </button>
           </div>
-        )}
-      </main>
-    </div>
+          {SECTIONS.map((s, n) => (
+            <div key={s.id} className="pb-1" data-slot="tables-section" data-section={s.id}>
+              <button
+                type="button"
+                className={cn('flex w-full items-baseline justify-between px-2 pt-2 pb-0.5 text-left text-[11px] font-semibold text-muted-foreground uppercase hover:text-foreground', section === s.id && 'text-foreground')}
+                title={s.tip}
+                onClick={() => openItem(s.id)}
+                data-slot="tables-section-head"
+                data-section={s.id}
+              >
+                <span>
+                  {n + 1} · {s.title}
+                </span>
+                {s.id === 'inputs' && <span className="font-normal normal-case">from Design</span>}
+              </button>
+              {rows
+                .filter((r) => r.section === s.id)
+                .map((r) => (
+                  <ListItem
+                    key={`${r.section}:${r.id}`}
+                    row={r}
+                    lit={section === r.section && id === r.id}
+                    head={r.section === 'case' && r.id ? heads.get(r.id) : undefined}
+                    object={(r.section === 'dataflows' || r.section === 'params') && r.id ? byId.get(r.id) : undefined}
+                  />
+                ))}
+              {s.id === 'case' && cases.heads.length === 0 && <div className="px-3 text-muted-foreground">none yet: + in a case's header, or New case</div>}
+              {s.id === 'dataflows' && (
+                <button type="button" className={cn('block w-full truncate py-0.5 pl-3 text-left text-muted-foreground hover:bg-accent hover:text-foreground', section === 'dataflows' && id === NEW_SCRIPT && 'bg-selection text-primary')} onClick={() => openItem('dataflows', NEW_SCRIPT)} data-slot="new-script">
+                  + New script
+                </button>
+              )}
+            </div>
+          ))}
+        </nav>
+        <main className="flex min-w-0 flex-1 flex-col" data-slot="tables-item-view">
+          {section === 'inputs' && (id === OBJECTS || !id ? <BlockTable /> : <ReservesTable key={id} tableId={id} picker={null} onDeleted={() => openItem('inputs', OBJECTS)} />)}
+          {section === 'results' && id && <ReservesTable key={id} tableId={id} picker={null} onDeleted={() => openItem('results', null)} />}
+          {section === 'results' && !id && <Empty words="No results yet: a case's run makes its reserves table." />}
+          {section === 'schedule' && <Schedule />}
+          {seen.has('case') && (
+            <div className={cn('min-h-0 flex-1', section !== 'case' && 'hidden')}>
+              {cases.heads.length > 0 ? <ReservesCasePanel caseTable={section === 'case' ? id : caseShown} /> : <Empty words="No case yet. A case is a reserves table: make one from a block layer with New case (the + in a case's header) or from Python." />}
+            </div>
+          )}
+          {seen.has('params') && (
+            <div className={cn('min-h-0 flex-1', section !== 'params' && section !== 'dataflows' && 'hidden')}>
+              <Parameters shown={section === 'params' || section === 'dataflows' ? id : null} list={false} />
+            </div>
+          )}
+        </main>
+      </div>
+    </PortalRoot.Provider>
   );
 }
 

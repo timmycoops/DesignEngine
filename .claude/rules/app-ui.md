@@ -30,7 +30,9 @@ changes the map here first, in its own decision.
   picked unit opens under its row in the units table (0107).
 - **Both** (0109): Design's layout with the Tables panel beside the view on its right, the ribbon showing Design's rows
   and the case and Run together; a block picked on the case's map is picked in the view. The switch reads Design ·
-  Both · Tables. The Tables side popped out into a window of its own is 0109's second piece.
+  Both · Tables. The Tables side pops out into a window of its own (its list's head, dockview's pop-out into an app
+  window the shell makes, `on_new_window`): a menu, list or tip opens in the window it's used in (`PortalRoot`, or the
+  kit list's own box's page), so a new one drawn into a portal must do the same; keys there reach the app's shortcuts.
 - **One home each:**
   - What a tool works on (Picked, Its layer, On show): the foot of the view (`WorksOnBar`, `panels/worksOn.ts`); Cut
     solids and Interrogate read it, and say what it takes where their own choice was. A new tool that takes solids

@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { usePortalRoot } from '@/design-system/portalRoot';
 import { cn } from "cn"
 import { ContextMenu as ContextMenuPrimitive } from "radix-ui"
 import { ChevronRightIcon } from "lucide-react"
@@ -22,7 +23,7 @@ function ContextMenuContent({
   ...props
 }: React.ComponentProps<typeof ContextMenuPrimitive.Content>) {
   return (
-    <ContextMenuPrimitive.Portal>
+    <ContextMenuPrimitive.Portal container={usePortalRoot()}>
       <ContextMenuPrimitive.Content
         data-slot="context-menu-content"
         className={cn("z-50 max-h-(--radix-context-menu-content-available-height) min-w-40 origin-(--radix-context-menu-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-lg bg-popover p-1 text-popover-foreground shadow-lg shadow-black/50 ring-1 ring-foreground/20 duration-100 data-open:animate-in data-open:fade-in-0", className)}
@@ -96,7 +97,7 @@ function ContextMenuSubContent({
   ...props
 }: React.ComponentProps<typeof ContextMenuPrimitive.SubContent>) {
   return (
-    <ContextMenuPrimitive.Portal>
+    <ContextMenuPrimitive.Portal container={usePortalRoot()}>
       <ContextMenuPrimitive.SubContent
         data-slot="context-menu-sub-content"
         className={cn("z-50 max-h-80 min-w-32 overflow-y-auto rounded-lg bg-popover p-1 text-popover-foreground shadow-lg shadow-black/50 ring-1 ring-foreground/20", className)}
