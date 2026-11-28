@@ -1,6 +1,6 @@
 # 0109 — Both sides at once, and the Tables side popped out: the table work and the design seen together, beside the view or in a window of its own. Agreed by Tim 2026-11-28.
 
-Date: 2026-11-28 · Status: accepted (Tim, 2026-11-28: "Build both", on the plan put to him in the session after #303)
+Date: 2026-11-28 · Status: accepted (Tim, 2026-11-28: "Build both", on the plan put to him in the session after #303); decision 1, Both, taken out the same day (Tim: "I don't think both make sense when we can dock as we need"), the pop-out kept
 
 ## Why
 
@@ -31,7 +31,7 @@ window is made in code.
 
 The map of places in `.claude/rules/app-ui.md` gains both.
 
-## Built: Both
+## Built: Both (taken out the same day, below)
 
 - **The switch** (`SideSwitch` in `Ribbon.tsx`): Design · Both · Tables. What the window shows is `Showing` in the tool
   list (`Side` or `both`), kept for each project in `zd.side.v1`.
@@ -85,13 +85,36 @@ The map of places in `.claude/rules/app-ui.md` gains both.
 | `--select` | 40 of 40 |
 | `cargo clippy -p zd-app --all-targets -- -D warnings` | clean |
 
+## Both taken out, the pop-out from Design (28 November)
+
+Tim, having used the two: "I don't think we need the both - let's allow the tables to dock out but by the design tab
+and it will be clean that you can then just add it back to the main screen. I don't think both make sense when we can
+dock as we need."
+
+- **The switch reads Design · Tables** again (`SideSwitch`); `Showing` is gone, the window shows a `Side`. A project
+  remembered on Both opens on Design.
+- **The pop-out from Design:** a button beside the switch (`PopTables` in `Ribbon.tsx`, `ribbon-pop`) pops the Tables
+  side out into its own window from either side; the main window stays on Design with the view at its width, and the
+  case and Run on its ribbon. Its list's head keeps its button too.
+- **Back into the main window:** by either button or Tables on the switch, the Tables side comes back on Tables,
+  filling the window (`popBackTables`, `backToTables`). Closed by its own X, it goes back and away, the main window
+  left on Design.
+- **Picks:** the case's map picks in the view only while it's popped out (`viewBeside` is the pop-out alone).
+- Gone with Both: `besideView`, the Tables panel's group put beside the view; the `both` side of a panel in `PANELS`,
+  which none had.
+
+| Check | Result |
+|---|---|
+| `pnpm test` | 204 pass: a pick goes to the view only popped out; Both remembered reads as Design |
+| `--shell`, release build from this branch | 71 of 71, 4 new: the switch reads Design and Tables, the pop-out button beside it; from Design the ribbon pops the Tables side out, Design kept with the view at its width; the same button brings it back on Tables, filling the window; closed by its X it goes away, Design kept. Brought back by its list's button it's on Tables now, not away on Design |
+| `--case` | 67 of 70: popped out, a block picked on the case's map in its own window picks its solids in the view; the Both check gone. The 3 left fail the same on main, from the used demo |
+| `--workflow` | 54 of 54 |
+| `--select` | 46 of 46 |
+
 ## Known limits
 
-- **On a 1,600 px window Both is tight**: with Layers and Properties open, the view and the Tables panel get about 460 px
-  each. Minimise Layers or Properties to their strips for room, or pop the Tables side out.
 - **With the list folded**, a section's number opens its first item, or the one it showed last; another case is picked
   on the top row, but another parameter table or dataflow needs the list open (wider).
-- **The Tables panel shows no tab in Both**, as on Tables: it's dragged by its edge, not its tab.
 - **Picks go one way from the case:** a solid picked in the view doesn't pick its block on the case's map.
 - **The popped-out window isn't remembered across a restart** beyond what the saved layout holds: dockview reopens it
   where it can; if it can't, the panel is back in the main window.

@@ -1,14 +1,15 @@
 import { useLayoutEffect, useRef, useState } from 'react';
-import { ChevronDown, Search } from 'lucide-react';
+import { ChevronDown, PictureInPicture2, Search, SquareArrowOutUpRight } from 'lucide-react';
 import { cn } from 'cn';
 import { Button } from '@/design-system/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from '@/design-system/ui/dropdown-menu';
 import { Separator } from '@/design-system/ui/separator';
-import { ALWAYS_ROW, EDIT_ROW, type Group, panelTool, PROJECT_MENU, type RowItem, type RowMenu, ROWS, rowName, type Showing, STAGES, toolByKey } from '@/tools';
+import { IconButton } from '@/design-system/kit';
+import { ALWAYS_ROW, EDIT_ROW, type Group, panelTool, PROJECT_MENU, type RowItem, type RowMenu, ROWS, rowName, type Side, STAGES, toolByKey } from '@/tools';
 import { PANELS } from './panels';
 import { CaseRun } from '@/panels/CaseRun';
 import { useSyncExternalStore } from 'react';
-import { onItem, poppedNow } from './tablesSide';
+import { onItem, popBack, popOut, poppedNow } from './tablesSide';
 import { BarTool, RowMenuItems, RowToolItem, type ToolUse } from './ToolMenu';
 import { IconNamed } from './toolIcons';
 import { toolShortcut } from '@/viewport/viewControls';
@@ -198,13 +199,12 @@ function ProjectMenu({ use }: { use: ToolUse }) {
 }
 
 /**
- * Design, Both or Tables (decisions 0108, 0109): which side of the app is in front, each with its own layout, or both at
- * once, the Tables side beside the view.
+ * Design or Tables (decision 0108): which side of the app is in front, each with its own layout. To see both, the Tables
+ * side pops out into a window of its own (0109), from the button beside the switch.
  */
-function SideSwitch({ side, onSide }: { side: Showing; onSide: (side: Showing) => void }) {
-  const sides: { id: Showing; title: string; tip: string }[] = [
+function SideSwitch({ side, onSide }: { side: Side; onSide: (side: Side) => void }) {
+  const sides: { id: Side; title: string; tip: string }[] = [
     { id: 'design', title: 'Design', tip: 'Design: strings, walls, surfaces, solids and geology, in the view' },
-    { id: 'both', title: 'Both', tip: 'Both: the Tables side beside the view, a pick on one shown on the other' },
     { id: 'tables', title: 'Tables', tip: 'Tables: inputs, cases, dataflows, parameters and results, on to the schedule' },
   ];
   return (
@@ -231,6 +231,20 @@ function SideSwitch({ side, onSide }: { side: Showing; onSide: (side: Showing) =
 }
 
 /**
+ * The Tables side into a window of its own and back (decision 0109), beside the switch: popped out from Design, the
+ * main window keeps the view; brought back, it's on Tables in the main window.
+ */
+function PopTables() {
+  const popped = useSyncExternalStore(onItem, poppedNow);
+  const tip = popped ? 'Bring the Tables side back into this window' : 'Pop the Tables side out into a window of its own, for a second monitor';
+  return (
+    <IconButton label={tip} className="ml-1" data-slot="ribbon-pop" data-popped={popped ? 'yes' : 'no'} onClick={() => (popped ? popBack() : popOut())}>
+      {popped ? <PictureInPicture2 /> : <SquareArrowOutUpRight />}
+    </IconButton>
+  );
+}
+
+/**
  * The ribbon (decisions 0076, 0108). Along the top: the project menu, the project's name, Save, Undo and Redo, the
  * Design or Tables switch, on Design a tab for each group of tools and on Tables the case and its Run, and Find a command.
  * Under it on Design, the group's row of tools named in words, with Move, Rotate, Mirror and Delete, Workflow and the
@@ -249,15 +263,14 @@ export function Ribbon({
 }: {
   projectName: string;
   projectPath: string | null;
-  side: Showing;
-  onSide: (side: Showing) => void;
+  side: Side;
+  onSide: (side: Side) => void;
   stage: StageId;
   onStage: (stage: StageId) => void;
   onFind: () => void;
   use: ToolUse;
 }) {
-  // Both shows Design's tools and the Tables side's case and Run together (decision 0109).
-  const design = side !== 'tables';
+  const design = side === 'design';
   // The Tables side in a window of its own keeps the case and its Run on the main window's ribbon (decision 0109).
   const popped = useSyncExternalStore(onItem, poppedNow);
   return (
@@ -271,6 +284,7 @@ export function Ribbon({
           <BarTool key={key} tool={toolByKey(key)!} use={use} />
         ))}
         <SideSwitch side={side} onSide={onSide} />
+        <PopTables />
         {/* The one place on the Tables side to run (decision 0108, workstream 4). */}
         {(side !== 'design' || popped) && <CaseRun />}
         {design && (

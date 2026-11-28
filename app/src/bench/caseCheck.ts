@@ -143,23 +143,9 @@ export async function checkCase(path: string, log: (line: string) => void, show:
   }, 20_000);
   expect('the units table shows B5 before and after rom_loss', !!table);
 
-  // Both (decision 0109): the case beside the view, a block picked on its map picked in the view too.
-  document.querySelector<HTMLElement>('[data-slot="side-switch"] [data-side="both"]')?.click();
-  await wait(800);
-  (await until(() => document.querySelector<HTMLElement>('[data-slot="map-block"][data-block="Pit 2 B3"]'), 10_000))?.click();
-  const pickedInView = await until(() => (document.body.textContent ?? '').match(/(\d+) selected/)?.[1] ?? null, 15_000);
-  const viewShown = (api.getPanel('viewport')?.group.element.getBoundingClientRect().width ?? 0) > 300;
-  expect('with both shown, a block picked on the case map is picked in the view beside it', !!pickedInView && Number(pickedInView) > 0 && viewShown, { picked: pickedInView, view_shown: viewShown });
-  await picture?.('case-both');
-  document.querySelector<HTMLElement>('[data-slot="side-switch"] [data-side="tables"]')?.click();
-  await wait(800);
-  // B5 picked again, as the checks after this read it.
-  document.querySelector<HTMLElement>('[data-slot="map-block"][data-block="Pit 3 B5"]')?.click();
-  await until(() => (document.querySelector('[data-slot="units-table"]')?.textContent ?? '').includes('Pit / 3 / B5 before and after rom_loss'), 20_000);
-
   // Popped out (decision 0109): the view is in the main window beside it, so a block picked on the map in the Tables
-  // side's own window is picked in the view too. The view still holds B3's solids from Both, so B3 is picked there
-  // first, then B5, and what Properties shows is read before and after, as the two blocks may hold as many solids.
+  // side's own window is picked in the view too. B3 is picked there first, then B5, and what Properties shows is read
+  // before and after, as the two blocks may hold as many solids.
   const tablesPage = () => api.getPanel('tables')?.group.element.ownerDocument ?? null;
   const popButton = () => [...(tablesPage()?.querySelectorAll<HTMLElement>('[data-slot="tables-pop"]') ?? [])].find((e) => e.getClientRects().length > 0) ?? null;
   const properties = () => api.getPanel('properties')?.group.element.textContent ?? '';

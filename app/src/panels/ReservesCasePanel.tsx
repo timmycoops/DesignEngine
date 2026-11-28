@@ -476,11 +476,11 @@ export function ReservesCasePanel({ caseTable = null }: { caseTable?: string | n
     const ids = await reservesSolids(table.id, path);
     if (ids.length === 0) return setCaseSaid({ text: `${path.join(' › ')} has no solids in the project to show`, refused: true });
     setSelection(ids);
-    // With the view beside the case (both shown, or popped out): framed there, the Tables side kept (decision 0109).
+    // With the view beside the case (the Tables side popped out): framed there, the Tables side kept (decision 0109).
     if (!viewBeside()) openTool('properties');
     zoomTo(ids);
   };
-  // With the view beside it (both shown, or popped out), the block picked on the map is picked in the view (decision 0109).
+  // With the view beside it (the Tables side popped out), the block picked on the map is picked in the view (decision 0109).
   useEffect(() => {
     if (!table || !block || !viewBeside()) return;
     let current = true;

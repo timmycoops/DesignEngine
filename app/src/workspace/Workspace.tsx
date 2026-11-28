@@ -33,8 +33,8 @@ import { LicencePanel } from '@/panels/LicencePanel';
 import { ViewControlsPanel } from '@/panels/ViewControlsPanel';
 import { TablesSidePanel } from '@/panels/TablesSidePanel';
 import { type Dock, isItem, type PanelId, PANELS, panelSide, TOOL_DOCK_WIDTH } from './panels';
-import { openItem, poppedNow, type Section, setPopped, setPopper, setShowing } from './tablesSide';
-import type { Showing } from '@/tools';
+import { openItem, poppedNow, type Section, setPopped, setPopper } from './tablesSide';
+import type { Side } from '@/tools';
 
 /** What each panel draws. A panel in the list with nothing to draw doesn't compile. */
 const components: Record<PanelId | 'viewport' | (typeof RETIRED)[number], () => ReactNode> = {
@@ -123,11 +123,11 @@ function writeEdges(edges: Record<string, Edge>) {
 }
 
 /** The side the workspace is on (decision 0108): Design's docks round the view, or the Tables side's group filling the window. */
-let currentSide: Showing = 'design';
+let currentSide: Side = 'design';
 /** Design's docks' sizes as they stood the last time Design was in front, put back as the Tables side comes and goes. */
 let designDocks: Held[] = [];
 /** Told when a panel of the other side is asked for, so App switches its side and ribbon with it. */
-let onSideAsked: ((side: Showing) => void) | null = null;
+let onSideAsked: ((side: Side) => void) | null = null;
 
 
 /** A panel the Tables side shows: its own, and one that goes with either side. */
@@ -153,12 +153,12 @@ const groupUnderView = (api: DockviewApi) => api.addGroup({ referencePanel: 'vie
 
 /**
  * The Tables panels open, gathered into the Tables side's group (made under the view if there's none): those of a
- * layout saved before the two sides sat in the tables dock beside Design's. With `withBoth`, the Tables panel too.
+ * layout saved before the two sides sat in the tables dock beside Design's.
  */
-function gatherTables(api: DockviewApi, withBoth: boolean): DockviewGroupPanel | undefined {
+function gatherTables(api: DockviewApi): DockviewGroupPanel | undefined {
   let group = tablesGroup(api);
   for (const p of PANELS) {
-    if (p.side !== 'tables' && !(withBoth && p.side === 'both')) continue;
+    if (p.side !== 'tables') continue;
     const panel = api.getPanel(p.id);
     // One in a window of its own stays there (decision 0109).
     if (!panel || panel.group === group || panel.group.api.location.type !== 'grid') continue;
@@ -172,50 +172,48 @@ function gatherTables(api: DockviewApi, withBoth: boolean): DockviewGroupPanel |
  * Puts the workspace on a side (decision 0108). Tables: its panels gathered into their group, which fills the window
  * (the Reserves case opened if none is). Design: that group hidden, Design's docks round the view as they were left.
  */
-export function showSide(api: DockviewApi, side: Showing) {
+export function showSide(api: DockviewApi, side: Side) {
   // Design's docks keep their sizes as the Tables side's group comes and goes beside them: as they stood on Design.
   if (currentSide === 'design' && !api.hasMaximizedGroup()) designDocks = dockSizes(api);
   currentSide = side;
-  setShowing(side);
-  // Tables or Both asked for while the Tables side is in its own window (decision 0109): it comes back first, and the
-  // side is put on the layout once it's back in the grid (`backFromWindow`).
-  if (side !== 'design' && poppedGroup(api)) {
+  // Tables asked for while the Tables side is in its own window (decision 0109): it comes back first, and the side is
+  // put on the layout once it's back in the grid (`backFromWindow`).
+  if (side === 'tables' && poppedGroup(api)) {
     poppedWindow?.close();
     return;
   }
   if (side === 'design') {
     if (api.hasMaximizedGroup()) api.exitMaximizedGroup();
-    gatherTables(api, false)?.api.setVisible(false);
+    gatherTables(api)?.api.setVisible(false);
     const tables = tablesGroup(api);
     holdDocks(api, designDocks.filter((h) => h.group !== tables));
     keepMounted(api);
     onMinimisedChange?.();
     return;
   }
-  let group = gatherTables(api, true);
+  const group = tablesSideGroup(api);
+  holdDocks(api, designDocks);
+  if (!group.api.isMaximized()) {
+    if (api.hasMaximizedGroup()) api.exitMaximizedGroup();
+    group.api.maximize();
+  }
+  keepMounted(api);
+  onMinimisedChange?.();
+}
+
+/** The Tables side's group, its panels gathered in, made under the view if there's none, and shown. */
+function tablesSideGroup(api: DockviewApi): DockviewGroupPanel {
+  let group = gatherTables(api);
   if (!group) {
     const made = PANELS.find((p) => p.id === 'tables')!;
-    api.addPanel({ id: made.id, component: made.id, title: made.title, position: { referencePanel: 'viewport', direction: side === 'both' ? 'right' : 'below' } });
+    api.addPanel({ id: made.id, component: made.id, title: made.title, position: { referencePanel: 'viewport', direction: 'below' } });
     group = api.getPanel('tables')!.group;
   }
   if (!group.api.isVisible) group.api.setVisible(true);
   // The Tables panel alone fills its group with no tab over it, as the view has none (decision 0108, workstream 4).
   const alone = group.panels.length === 1 && group.panels[0].id === 'tables';
   if (group.header.hidden !== alone) group.header.hidden = alone;
-  if (side === 'tables') {
-    holdDocks(api, designDocks);
-    if (!group.api.isMaximized()) {
-      if (api.hasMaximizedGroup()) api.exitMaximizedGroup();
-      group.api.maximize();
-    }
-  } else {
-    // Both (decision 0109): Design's docks as they were left, the Tables side beside the view on its right.
-    if (api.hasMaximizedGroup()) api.exitMaximizedGroup();
-    besideView(api, group);
-    holdDocks(api, designDocks.filter((h) => h.group !== group));
-  }
-  keepMounted(api);
-  onMinimisedChange?.();
+  return group;
 }
 
 /** The Tables panel's group while it's in a window of its own, and that window (decision 0109). */
@@ -228,13 +226,12 @@ let poppedWindow: Window | null = null;
 /**
  * The Tables side into a window of its own, for a second monitor (decision 0109): dockview's pop-out, into an app window
  * the shell makes for it (`on_new_window` in main.rs), the main window left on Design. One app, so picks, edits and Run
- * stay shared.
+ * stay shared. It pops out from either side: from Design, the ribbon's button beside the switch.
  */
 async function popOutTables(api: DockviewApi) {
   if (poppedGroup(api)) return poppedWindow?.focus();
-  if (currentSide === 'design') showSide(api, 'both');
-  const group = api.getPanel('tables')?.group;
-  if (!group) return;
+  if (currentSide === 'design' && !api.hasMaximizedGroup()) designDocks = dockSizes(api);
+  const group = tablesSideGroup(api);
   if (api.hasMaximizedGroup()) api.exitMaximizedGroup();
   const position = {
     left: window.screenX + 60,
@@ -258,18 +255,29 @@ async function popOutTables(api: DockviewApi) {
   showSide(api, 'design');
 }
 
-/** The Tables side back into the main window: its window closed, dockview puts the group back. */
-const popBackTables = () => poppedWindow?.close();
+/** Brought back by its button, the switch's Tables or the ribbon's: the main window goes to Tables to show it there. */
+let backToTables = false;
+
+/** The Tables side back into the main window, shown there on Tables: its window closed, dockview puts the group back. */
+const popBackTables = () => {
+  backToTables = true;
+  poppedWindow?.close();
+};
 
 /**
- * Once the Tables side's window has closed (by its X, or asked back), the side as it stands put on the layout: hidden on
- * Design, filling the window on Tables, beside the view in Both.
+ * Once the Tables side's window has closed, the side put on the layout: brought back, on Tables, filling the window;
+ * closed by its X, the main window stays on Design with the Tables side away, a click on Tables from it.
  */
 function backFromWindow(api: DockviewApi) {
   if (!poppedNow() || poppedGroup(api)) return;
   setPopped(false);
   poppedWindow = null;
   closePoppedWindows();
+  if (backToTables && currentSide !== 'tables') {
+    currentSide = 'tables';
+    onSideAsked?.('tables');
+  }
+  backToTables = false;
   setTimeout(() => showSide(api, currentSide), 0);
   // The main window takes the keys again.
   void getCurrentWindow()
@@ -302,25 +310,6 @@ function passKeys(w: Window) {
     document.body.dispatchEvent(copy);
     if (copy.defaultPrevented) e.preventDefault();
   });
-}
-
-/** The width the Tables side takes beside the view in Both, as a share of the room the two have. */
-const BOTH_SHARE = 0.5;
-
-/**
- * The Tables side's group put beside the view, on its right between it and the tool slot, half the room the two share,
- * where it isn't already there (made under the view, or dragged off).
- */
-function besideView(api: DockviewApi, group: DockviewGroupPanel) {
-  const view = api.getPanel('viewport')?.group;
-  if (!view) return;
-  const v = view.element.getBoundingClientRect();
-  const g = group.element.getBoundingClientRect();
-  const beside = g.width > 0 && Math.abs(g.left - v.right) <= 2 && Math.abs(g.top - v.top) <= 2;
-  if (beside) return;
-  const room = view.api.width;
-  group.api.moveTo({ group: view, position: 'right' });
-  group.api.setSize({ width: Math.round(room * BOTH_SHARE) });
 }
 
 function saveLayout(api: DockviewApi) {
@@ -525,8 +514,7 @@ export function showPanel(api: DockviewApi, id: PanelId) {
     id = 'tables';
   }
   const side = panelSide(id);
-  // With both shown, a panel of either side opens where it lives without a switch (decision 0109).
-  if (side !== 'both' && side !== currentSide && currentSide !== 'both') {
+  if (side !== currentSide) {
     onSideAsked?.(side);
     showSide(api, side);
   }
@@ -545,7 +533,7 @@ function showOnTables(api: DockviewApi, id: PanelId) {
     api.addPanel({ id, component: id, title: made.title, position: { referenceGroup: group, direction: 'within' } });
   }
   api.getPanel(id)?.api.setActive();
-  showSide(api, currentSide === 'both' ? 'both' : 'tables');
+  showSide(api, 'tables');
 }
 
 /**
@@ -564,12 +552,6 @@ function keepMounted(api: DockviewApi) {
 
 function bringToFront(api: DockviewApi, id: PanelId) {
   const open = api.getPanel(id);
-  // The Tables panel asked for on Design while it sits in the Tables side's group: it comes to Design's tables dock.
-  if (open && open.group === tablesGroup(api) && panelSide(id) === 'both') {
-    open.api.moveTo({ group: dockGroup(api, 'results') ?? groupUnderView(api), position: 'center' });
-    open.api.setActive();
-    return;
-  }
   if (open) {
     if (!open.group.api.isVisible) return restore(api, open.group.id, id);
     return open.api.setActive();
@@ -644,7 +626,6 @@ export function resetLayout(api: DockviewApi) {
   // The layout from the start is Design's: the side goes back with it.
   if (currentSide !== 'design') onSideAsked?.('design');
   currentSide = 'design';
-  setShowing('design');
   api.clear();
   writeEdges({});
   defaultLayout(api);
@@ -738,8 +719,8 @@ export function Workspace({
   onReady,
   onShown,
 }: {
-  side: Showing;
-  onSide: (side: Showing) => void;
+  side: Side;
+  onSide: (side: Side) => void;
   onReady: (api: DockviewApi) => void;
   onShown?: (panels: PanelId[]) => void;
 }) {
